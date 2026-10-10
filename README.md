@@ -11,8 +11,8 @@ Pedro Sader Azevedo and many other contributors. They have spent years on a
 protocol that is unforgiving in practice.
 
 Kydisplay's starting point for the KDE-side work and the patch stack was
-[mirdispo](https://github.com/hencyber/mirdispo), which packaged the GND
-engine without its GTK interface under a Plasma front end. This repository
+[mirdispo](https://github.com/hencyber/mirdispo), which packaged the GND 
+engine without its GTK interface under a Plasma front end. I started working on it at (https://github.com/Emperor-and-Fool/gnd-mirdispo-henc)This repository
 redistributes that engine the same way, with the patches in
 `packaging/patches/` — each one a fault found by using the engine rather
 than a rewrite of it. The patches are written to be readable upstream, and
