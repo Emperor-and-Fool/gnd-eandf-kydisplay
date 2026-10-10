@@ -1,4 +1,4 @@
-From: Mirdispo contributors
+From: Kydisplay contributors
 Subject: Say how many frames were captured and how many were sent
 
 A session reported frames only when it had dropped some, which left the two

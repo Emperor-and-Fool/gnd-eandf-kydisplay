@@ -1,4 +1,4 @@
-From: Mirdispo contributors
+From: Kydisplay contributors
 Subject: Ask for the zone by name instead of reading it
 
 Starting a stream first asks firewalld whether the Wi-Fi Display zone is

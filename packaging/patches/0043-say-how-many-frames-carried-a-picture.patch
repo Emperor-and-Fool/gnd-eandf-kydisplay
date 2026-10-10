@@ -1,4 +1,4 @@
-From: Mirdispo contributors
+From: Kydisplay contributors
 Subject: Say how many frames carried a picture
 
 A frame the desktop never redrew is sent again as it was. The source that

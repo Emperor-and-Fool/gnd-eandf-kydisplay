@@ -1,4 +1,4 @@
-From: Mirdispo contributors
+From: Kydisplay contributors
 Subject: Report what a cast is doing, while somebody is reading it
 
 What a cast is doing is totalled every ten seconds and written to the log.
