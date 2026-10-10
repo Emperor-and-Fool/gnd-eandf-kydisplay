@@ -4,29 +4,29 @@ DESTDIR ?=
 .PHONY: install uninstall test smoke clean audit backend deb
 
 install:
-	install -Dm755 bin/mirdispo "$(DESTDIR)$(PREFIX)/bin/mirdispo"
-	install -d "$(DESTDIR)$(PREFIX)/lib/mirdispo/mirdispo"
-	cp -R src/mirdispo/. "$(DESTDIR)$(PREFIX)/lib/mirdispo/mirdispo/"
-	find "$(DESTDIR)$(PREFIX)/lib/mirdispo" -type d -name __pycache__ -prune -exec rm -r {} +
-	install -Dm644 io.github.hencyber.Mirdispo.desktop \
-		"$(DESTDIR)$(PREFIX)/share/applications/io.github.hencyber.Mirdispo.desktop"
-	install -Dm644 io.github.hencyber.Mirdispo.metainfo.xml \
-		"$(DESTDIR)$(PREFIX)/share/metainfo/io.github.hencyber.Mirdispo.metainfo.xml"
-	install -Dm755 vendor/amd64/mirdispo-daemon \
-		"$(DESTDIR)$(PREFIX)/libexec/mirdispo-daemon"
+	install -Dm755 bin/kydisplay "$(DESTDIR)$(PREFIX)/bin/kydisplay"
+	install -d "$(DESTDIR)$(PREFIX)/lib/kydisplay/kydisplay"
+	cp -R src/kydisplay/. "$(DESTDIR)$(PREFIX)/lib/kydisplay/kydisplay/"
+	find "$(DESTDIR)$(PREFIX)/lib/kydisplay" -type d -name __pycache__ -prune -exec rm -r {} +
+	install -Dm644 nl.eandf.Kydisplay.desktop \
+		"$(DESTDIR)$(PREFIX)/share/applications/nl.eandf.Kydisplay.desktop"
+	install -Dm644 nl.eandf.Kydisplay.metainfo.xml \
+		"$(DESTDIR)$(PREFIX)/share/metainfo/nl.eandf.Kydisplay.metainfo.xml"
+	install -Dm755 vendor/amd64/kydisplay-daemon \
+		"$(DESTDIR)$(PREFIX)/libexec/kydisplay-daemon"
 	install -Dm755 vendor/amd64/gnome-network-displays-stream \
 		"$(DESTDIR)$(PREFIX)/libexec/gnome-network-displays-stream"
 	install -d "$(DESTDIR)$(PREFIX)/share/icons"
 	cp -R assets/icons/hicolor "$(DESTDIR)$(PREFIX)/share/icons/"
 	install -Dm644 vendor/source/gnome-network-displays-0.99.0.tar.xz \
-		"$(DESTDIR)$(PREFIX)/share/doc/mirdispo/gnome-network-displays-0.99.0.tar.xz"
+		"$(DESTDIR)$(PREFIX)/share/doc/kydisplay/gnome-network-displays-0.99.0.tar.xz"
 
 uninstall:
-	rm -f "$(DESTDIR)$(PREFIX)/bin/mirdispo"
-	rm -rf "$(DESTDIR)$(PREFIX)/lib/mirdispo"
-	rm -f "$(DESTDIR)$(PREFIX)/share/applications/io.github.hencyber.Mirdispo.desktop"
-	rm -f "$(DESTDIR)$(PREFIX)/share/metainfo/io.github.hencyber.Mirdispo.metainfo.xml"
-	rm -f "$(DESTDIR)$(PREFIX)/libexec/mirdispo-daemon"
+	rm -f "$(DESTDIR)$(PREFIX)/bin/kydisplay"
+	rm -rf "$(DESTDIR)$(PREFIX)/lib/kydisplay"
+	rm -f "$(DESTDIR)$(PREFIX)/share/applications/nl.eandf.Kydisplay.desktop"
+	rm -f "$(DESTDIR)$(PREFIX)/share/metainfo/nl.eandf.Kydisplay.metainfo.xml"
+	rm -f "$(DESTDIR)$(PREFIX)/libexec/kydisplay-daemon"
 	rm -f "$(DESTDIR)$(PREFIX)/libexec/gnome-network-displays-stream"
 
 test:
@@ -39,7 +39,7 @@ test:
 
 smoke:
 	QT_QPA_PLATFORM=offscreen QT_QUICK_CONTROLS_STYLE=Basic \
-		./bin/mirdispo --demo --exit-after 1
+		./bin/kydisplay --demo --exit-after 1
 
 GND_TARBALL := vendor/source/gnome-network-displays-0.99.0.tar.xz
 
@@ -52,11 +52,11 @@ backend:
 	for p in packaging/patches/*.patch; do \
 		patch -d work/gnd-source -p1 --no-backup-if-mismatch -s < "$$p" || exit 1; \
 	done
-	meson setup work/gnd-build work/gnd-source --prefix=/usr --buildtype=release -Dbuild_app=false -Dbus_prefix=io.github.hencyber.Mirdispo
+	meson setup work/gnd-build work/gnd-source --prefix=/usr --buildtype=release -Dbuild_app=false -Dbus_prefix=nl.eandf.Kydisplay
 	ninja -C work/gnd-build
 	install -m755 work/gnd-build/src/gnome-network-displays-stream vendor/amd64/gnome-network-displays-stream
-	install -m755 work/gnd-build/src/gnome-network-displays-daemon vendor/amd64/mirdispo-daemon
-	strip vendor/amd64/gnome-network-displays-stream vendor/amd64/mirdispo-daemon
+	install -m755 work/gnd-build/src/gnome-network-displays-daemon vendor/amd64/kydisplay-daemon
+	strip vendor/amd64/gnome-network-displays-stream vendor/amd64/kydisplay-daemon
 
 deb:
 	packaging/build-deb.sh

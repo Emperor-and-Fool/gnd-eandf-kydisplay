@@ -1,4 +1,5 @@
-# Mirdispo — share a Plasma desktop on a wireless display
+# Kydisplay — share a Plasma desktop on a wireless display
+# Copyright (C) 2026 Kydisplay contributors
 # Copyright (C) 2026 Mirdispo contributors
 #
 # This program is free software: you can redistribute it and/or modify it
@@ -25,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from mirdispo import legal
+from kydisplay import legal
 
 GPL = "GNU GENERAL PUBLIC LICENSE\n Version 3, 29 June 2007\n"
 
@@ -48,7 +49,7 @@ class LicenceLookupTests(unittest.TestCase):
     def test_arch_and_fedora_layout(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            layout(root, {"usr/share/licenses/mirdispo/LICENSE": GPL})
+            layout(root, {"usr/share/licenses/kydisplay/LICENSE": GPL})
             text = legal.licence_text(legal.licence_candidates((root,))[:-1])
             self.assertIn("GNU GENERAL PUBLIC LICENSE", text)
 

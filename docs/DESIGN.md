@@ -1,18 +1,18 @@
-# How Mirdispo works
+# How Kydisplay works
 
-Notes for anyone changing Mirdispo: how it is put together, and why the less
+Notes for anyone changing Kydisplay: how it is put together, and why the less
 obvious decisions were made. What changed in each release is in the
-`<releases>` section of `io.github.hencyber.Mirdispo.metainfo.xml`.
+`<releases>` section of `nl.eandf.Kydisplay.metainfo.xml`.
 
 ## Parts
 
-- **The front end** (`src/mirdispo`, Python and QML) is the window, the tray
+- **The front end** (`src/kydisplay`, Python and QML) is the window, the tray
   icon and the diagnostics. `DisplayBackend` in `backend.py` is a small state
   machine exposed to QML: idle, connecting, streaming, error.
 - **The engine** is GNOME Network Displays 0.99.0, built without its GTK
   interface and with the patches in `packaging/patches/`. Its daemon
   discovers receivers and starts streams. It is installed as
-  `libexec/mirdispo-daemon` and owns `io.github.hencyber.Mirdispo.Manager` on
+  `libexec/kydisplay-daemon` and owns `nl.eandf.Kydisplay.Manager` on
   the session bus. Each stream runs in its own helper process,
   `libexec/gnome-network-displays-stream`, which captures the screen through
   the ScreenCast portal and does the Wi-Fi Display or Chromecast session.
@@ -53,7 +53,7 @@ a second helper beside a running one makes the two collide at the receiver.
 ## Retries
 
 Receivers often refuse the first Wi-Fi Direct handshake, especially just after
-a previous session, so Mirdispo retries before telling the user anything.
+a previous session, so Kydisplay retries before telling the user anything.
 
 - NetworkManager gives up on a handshake after 45 seconds, but wpa_supplicant
   knows much sooner when group formation has failed. It brings up a group
@@ -99,7 +99,7 @@ sound stuttered.
 A receiver's highest frame rate at a given resolution is a hard limit. Many
 televisions take 1080p at 30 frames per second only, so motion there can never
 be as smooth as on a 120 Hz laptop screen without a lower resolution, which
-Mirdispo does not choose on the user's behalf. Within that limit:
+Kydisplay does not choose on the user's behalf. Within that limit:
 
 - A receiver lists its modes per H.264 profile, and a television can offer
   1080p at 60 Hz in the constrained high profile while its constrained
@@ -150,7 +150,7 @@ turns such a moment into a visible stutter.
 Every cast is a new helper process, so without help the portal would ask which
 screen to share on every attempt, including automatic retries. The helper asks
 for a persistent session and keeps the portal's restore token for the login
-session (patch 0006): in `$XDG_RUNTIME_DIR/mirdispo/`, or inside Flatpak in
+session (patch 0006): in `$XDG_RUNTIME_DIR/kydisplay/`, or inside Flatpak in
 `$XDG_RUNTIME_DIR/app/$FLATPAK_ID/` (patch 0011), since the sandbox's own
 runtime directory does not outlive the application.
 
@@ -160,7 +160,7 @@ runtime directory does not outlive the application.
   which `make backend` fills from the pristine upstream tarball and the
   patches. The package is reproducible and carries the engine's complete
   source.
-- `flatpak/io.github.hencyber.Mirdispo.yml` builds everything from source on
+- `flatpak/nl.eandf.Kydisplay.yml` builds everything from source on
   the KDE runtime.
 - A GitHub release runs `.github/workflows/flatpak-repo.yml`, which publishes a
   signed Flatpak repository on GitHub Pages. Installed copies update from it.

@@ -1,6 +1,6 @@
 /* The stream helper is found on D-Bus by the unit it was started as.
  *
- * Mirdispo reads a helper's state through its D-Bus name, so the name has to
+ * Kydisplay reads a helper's state through its D-Bus name, so the name has to
  * follow from the unit name alone, and the daemon has to hand that unit name
  * to the helper whether systemd starts it or the daemon does. */
 #include <glib.h>

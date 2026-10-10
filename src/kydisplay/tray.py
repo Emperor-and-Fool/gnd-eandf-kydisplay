@@ -1,4 +1,5 @@
-# Mirdispo — share a Plasma desktop on a wireless display
+# Kydisplay — share a Plasma desktop on a wireless display
+# Copyright (C) 2026 Kydisplay contributors
 # Copyright (C) 2026 Mirdispo contributors
 #
 # This program is free software: you can redistribute it and/or modify it
@@ -19,7 +20,7 @@
 """The system tray entry.
 
 A cast outlives the window: people close it and go back to what they were
-sharing. The tray keeps Mirdispo reachable meanwhile, says what it is doing,
+sharing. The tray keeps Kydisplay reachable meanwhile, says what it is doing,
 and is where a cast is stopped or the application quit. On a desktop without
 a system tray none of this exists and closing the window quits, as before.
 """
@@ -30,7 +31,7 @@ from PyQt6.QtCore import QObject, pyqtProperty, pyqtSlot
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
-APP_ID = "io.github.hencyber.Mirdispo"
+APP_ID = "nl.eandf.Kydisplay"
 
 
 def tray_label(status: str, device: str, status_text: str) -> str:
@@ -60,12 +61,12 @@ class Tray(QObject):
         self._state = self._menu.addAction("")
         self._state.setEnabled(False)
         self._menu.addSeparator()
-        self._show = self._menu.addAction(QIcon.fromTheme("window"), "Show Mirdispo")
+        self._show = self._menu.addAction(QIcon.fromTheme("window"), "Show Kydisplay")
         self._show.triggered.connect(self.showWindow)
         self._stop = self._menu.addAction(QIcon.fromTheme("media-playback-stop"), "Stop sharing")
         self._stop.triggered.connect(backend.disconnect)
         self._menu.addSeparator()
-        quit_action = self._menu.addAction(QIcon.fromTheme("application-exit"), "Quit Mirdispo")
+        quit_action = self._menu.addAction(QIcon.fromTheme("application-exit"), "Quit Kydisplay")
         quit_action.triggered.connect(self.quit)
         self._icon.setContextMenu(self._menu)
         self._icon.activated.connect(self._activated)
@@ -83,7 +84,7 @@ class Tray(QObject):
         status = self._backend.status
         label = tray_label(status, self._backend.selectedDevice, self._backend.statusText)
         self._state.setText(label)
-        self._icon.setToolTip(f"Mirdispo\n{label}")
+        self._icon.setToolTip(f"Kydisplay\n{label}")
         self._stop.setEnabled(can_stop(status))
         self._stop.setVisible(can_stop(status))
 
@@ -107,7 +108,7 @@ class Tray(QObject):
         if not self._told_about_tray:
             self._told_about_tray = True
             self._icon.showMessage(
-                "Mirdispo is still running",
+                "Kydisplay is still running",
                 "Stop sharing or quit from its icon in the system tray.",
                 QIcon.fromTheme(APP_ID), 5000)
 

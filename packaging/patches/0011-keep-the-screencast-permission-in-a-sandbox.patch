@@ -40,5 +40,5 @@ diff -ruN a/src/stream/nd-stream.c b/src/stream/nd-stream.c
 +                             NULL);
 +
    return g_build_filename (g_get_user_runtime_dir (),
-                            "mirdispo",
+                            "kydisplay",
                             "screencast-restore-token",

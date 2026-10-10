@@ -1,14 +1,17 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: Mirdispo
+Upstream-Name: Kydisplay
 Source: https://github.com/GNOME/gnome-network-displays
 Comment: The streaming backend is derived from GNOME Network Displays. The
- Plasma front end is new work by this project.
+ Plasma front end and the patch stack started from mirdispo
+ (https://github.com/hencyber/mirdispo), which packaged that engine for
+ Plasma; both remain under the same licence.
 
 Files: *
-Copyright: 2026 Mirdispo contributors
+Copyright: 2026 Kydisplay contributors
+ 2026 Mirdispo contributors
 License: GPL-3+
 
-Files: usr/libexec/mirdispo-daemon usr/libexec/gnome-network-displays-stream
+Files: usr/libexec/kydisplay-daemon usr/libexec/gnome-network-displays-stream
 Copyright: 2018 Benjamin Berg <bberg@redhat.com>
  2022-2024 Christian Glombek <lorbus@fedoraproject.org>
  2022-2023 Anupam Kumar <kyteinsky@gmail.com>
@@ -18,7 +21,7 @@ Copyright: 2018 Benjamin Berg <bberg@redhat.com>
  GNOME Network Displays contributors
 License: GPL-3+
 Comment: Modified in September 2026 and built from GNOME Network Displays
- 0.99.0. The modifications are the thirty-one patches installed alongside this file,
+ 0.99.0. The modifications are the patches installed alongside this file,
  covering encoder selection, stream unit naming, shutdown, PulseAudio teardown,
  a use-after-free in receiver discovery, reuse of the screen sharing
  permission, choosing the streamed display mode from both ends of the link,
@@ -36,11 +39,11 @@ Comment: Modified in September 2026 and built from GNOME Network Displays
  limit, sending frames evenly, keeping the PCR on video, letting the client
  pause discovery, retrying a failed mDNS resolve, and sending every bit of
  the chosen mode. The complete upstream source archive is installed at
- /usr/share/doc/mirdispo/gnome-network-displays-0.99.0.tar.xz;
+ /usr/share/doc/kydisplay/gnome-network-displays-0.99.0.tar.xz;
  applying the patches to it in numerical order reproduces the source these
  binaries were built from.
 
-Files: usr/libexec/mirdispo-daemon
+Files: usr/libexec/kydisplay-daemon
 Copyright: 2015 Red Hat, Inc.
  2014 Andrea Scarpino
 License: LGPL-2.1+

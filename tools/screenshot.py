@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Mirdispo — share a Plasma desktop on a wireless display
+# Kydisplay — share a Plasma desktop on a wireless display
+# Copyright (C) 2026 Kydisplay contributors
 # Copyright (C) 2026 Mirdispo contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Render the store screenshots from demo mode.
@@ -21,7 +22,7 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "org.kde.desktop")
 # An empty configuration directory, so the pictures show the default Breeze
 # colours rather than whatever theme the person running this has chosen.
-os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="mirdispo-screenshot-")
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="kydisplay-screenshot-")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -32,7 +33,7 @@ from PyQt6.QtQml import QQmlApplicationEngine  # noqa: E402
 from PyQt6.QtQuick import QQuickWindow  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
 
-from mirdispo.backend import DisplayBackend  # noqa: E402
+from kydisplay.backend import DisplayBackend  # noqa: E402
 
 WIDTH, HEIGHT = 900, 520
 
@@ -44,7 +45,7 @@ def main(out_dir: str) -> int:
     engine = QQmlApplicationEngine()
     backend = DisplayBackend(demo=True, parent=engine)
     engine.rootContext().setContextProperty("displayBackend", backend)
-    engine.load(QUrl.fromLocalFile(str(Path(__file__).resolve().parents[1] / "src/mirdispo/qml/Main.qml")))
+    engine.load(QUrl.fromLocalFile(str(Path(__file__).resolve().parents[1] / "src/kydisplay/qml/Main.qml")))
     if not engine.rootObjects():
         return 2
     window = sip.cast(engine.rootObjects()[0], QQuickWindow)

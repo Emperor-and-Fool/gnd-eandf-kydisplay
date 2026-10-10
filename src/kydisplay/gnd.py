@@ -1,4 +1,5 @@
-# Mirdispo — share a Plasma desktop on a wireless display
+# Kydisplay — share a Plasma desktop on a wireless display
+# Copyright (C) 2026 Kydisplay contributors
 # Copyright (C) 2026 Mirdispo contributors
 #
 # This program is free software: you can redistribute it and/or modify it
@@ -28,7 +29,7 @@ from .models import DisplayDevice
 # The engine is built with this project's bus prefix (patch 0010), so it never
 # competes with GNOME Network Displays for a name. The object path and the
 # interface are upstream's.
-BUS_PREFIX = "io.github.hencyber.Mirdispo"
+BUS_PREFIX = "nl.eandf.Kydisplay"
 SERVICE = BUS_PREFIX + ".Manager"
 PATH = "/org/gnome/NetworkDisplays/Manager"
 INTERFACE = "org.gnome.NetworkDisplays.Manager"
@@ -107,15 +108,15 @@ class GnomeNetworkDisplaysService:
     def _find_daemon(here=None):
         here = Path(here or __file__).resolve()
         candidates = [
-            os.environ.get("MIRDISPO_DAEMON"),
-            # Installed: <prefix>/lib/mirdispo/mirdispo/gnd.py sits beside
+            os.environ.get("KYDISPLAY_DAEMON"),
+            # Installed: <prefix>/lib/kydisplay/kydisplay/gnd.py sits beside
             # <prefix>/libexec, whatever the prefix. This covers the .deb,
             # the Flatpak under /app and make install into /usr/local or
             # ~/.local.
-            here.parents[3] / "libexec" / "mirdispo-daemon",
+            here.parents[3] / "libexec" / "kydisplay-daemon",
             # A checkout, after make backend.
-            here.parents[2] / "vendor" / "amd64" / "mirdispo-daemon",
-            "/usr/libexec/mirdispo-daemon",
+            here.parents[2] / "vendor" / "amd64" / "kydisplay-daemon",
+            "/usr/libexec/kydisplay-daemon",
         ]
         return next((str(item) for item in candidates if item and Path(item).is_file()), None)
 
@@ -182,7 +183,7 @@ class GnomeNetworkDisplaysService:
         runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
         if not runtime_dir:
             return False
-        return Path(runtime_dir, "mirdispo", "screencast-restore-token").is_file()
+        return Path(runtime_dir, "kydisplay", "screencast-restore-token").is_file()
 
     def start_stream(self, uuid: str, choose_source: bool = False,
                      slow_link: bool = False) -> str:

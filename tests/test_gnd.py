@@ -1,4 +1,5 @@
-# Mirdispo — share a Plasma desktop on a wireless display
+# Kydisplay — share a Plasma desktop on a wireless display
+# Copyright (C) 2026 Kydisplay contributors
 # Copyright (C) 2026 Mirdispo contributors
 #
 # This program is free software: you can redistribute it and/or modify it
@@ -23,7 +24,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from mirdispo.gnd import BUS_PREFIX, GnomeNetworkDisplaysService, _stream_process_running, display_from_dbus, stream_bus_name
+from kydisplay.gnd import BUS_PREFIX, GnomeNetworkDisplaysService, _stream_process_running, display_from_dbus, stream_bus_name
 
 
 class GndAdapterTests(unittest.TestCase):
@@ -97,7 +98,7 @@ class SandboxedStreamTests(unittest.TestCase):
 
 
 class FindDaemonTests(unittest.TestCase):
-    """The engine is found next to wherever Mirdispo itself is installed."""
+    """The engine is found next to wherever Kydisplay itself is installed."""
 
     def layout(self, files):
         root = Path(tempfile.mkdtemp())
@@ -109,15 +110,15 @@ class FindDaemonTests(unittest.TestCase):
 
     def test_any_install_prefix(self):
         for prefix in ("usr", "usr/local", "app", "home/user/.local"):
-            root = self.layout([f"{prefix}/lib/mirdispo/mirdispo/gnd.py",
-                                f"{prefix}/libexec/mirdispo-daemon"])
-            found = GnomeNetworkDisplaysService._find_daemon(root / prefix / "lib/mirdispo/mirdispo/gnd.py")
-            self.assertEqual(found, str(root / prefix / "libexec/mirdispo-daemon"))
+            root = self.layout([f"{prefix}/lib/kydisplay/kydisplay/gnd.py",
+                                f"{prefix}/libexec/kydisplay-daemon"])
+            found = GnomeNetworkDisplaysService._find_daemon(root / prefix / "lib/kydisplay/kydisplay/gnd.py")
+            self.assertEqual(found, str(root / prefix / "libexec/kydisplay-daemon"))
 
     def test_a_checkout_after_make_backend(self):
-        root = self.layout(["src/mirdispo/gnd.py", "vendor/amd64/mirdispo-daemon"])
-        found = GnomeNetworkDisplaysService._find_daemon(root / "src/mirdispo/gnd.py")
-        self.assertEqual(found, str(root / "vendor/amd64/mirdispo-daemon"))
+        root = self.layout(["src/kydisplay/gnd.py", "vendor/amd64/kydisplay-daemon"])
+        found = GnomeNetworkDisplaysService._find_daemon(root / "src/kydisplay/gnd.py")
+        self.assertEqual(found, str(root / "vendor/amd64/kydisplay-daemon"))
 
 
 if __name__ == "__main__":

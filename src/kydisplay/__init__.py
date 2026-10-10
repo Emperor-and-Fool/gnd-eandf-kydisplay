@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-# Mirdispo — share a Plasma desktop on a wireless display
+# Kydisplay — share a Plasma desktop on a wireless display
+# Copyright (C) 2026 Kydisplay contributors
 # Copyright (C) 2026 Mirdispo contributors
 #
 # This program is free software: you can redistribute it and/or modify it
@@ -17,20 +17,6 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from pathlib import Path
-import sys
+"""Kydisplay: share a Plasma desktop on a wireless display."""
 
-ROOT = Path(__file__).resolve().parents[1]
-for candidate in (
-    ROOT / "src",
-    ROOT / "lib" / "mirdispo",
-    Path("/usr/local/lib/mirdispo"),
-    Path("/usr/lib/mirdispo"),
-):
-    if (candidate / "mirdispo").is_dir():
-        sys.path.insert(0, str(candidate))
-        break
-
-from mirdispo.app import main
-
-raise SystemExit(main())
+__version__ = "3.8.0"

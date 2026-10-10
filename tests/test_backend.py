@@ -1,4 +1,5 @@
-# Mirdispo — share a Plasma desktop on a wireless display
+# Kydisplay — share a Plasma desktop on a wireless display
+# Copyright (C) 2026 Kydisplay contributors
 # Copyright (C) 2026 Mirdispo contributors
 #
 # This program is free software: you can redistribute it and/or modify it
@@ -24,10 +25,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from PyQt6.QtCore import QCoreApplication
 
-from mirdispo import p2p
-from mirdispo.backend import DisplayBackend
-from mirdispo.models import Diagnostic, DisplayDevice
-from mirdispo.vscreen import VirtualScreenError
+from kydisplay import p2p
+from kydisplay.backend import DisplayBackend
+from kydisplay.models import Diagnostic, DisplayDevice
+from kydisplay.vscreen import VirtualScreenError
 
 
 class FakeDiscovery:
@@ -587,7 +588,7 @@ class FakeVirtualScreen:
             raise VirtualScreenError(self._fails_with)
         self.starts += 1
         self.running = True
-        return "Virtual-Mirdispo"
+        return "Virtual-Kydisplay"
 
     def stop(self):
         self.stops += 1

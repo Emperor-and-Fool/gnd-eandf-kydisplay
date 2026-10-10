@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=Mirdispo
+Name=Kydisplay
 Comment=Share your screen with Miracast displays
-Exec=mirdispo
-Icon=io.github.hencyber.Mirdispo
+Exec=kydisplay
+Icon=nl.eandf.Kydisplay
 Categories=Qt;KDE;Network;RemoteAccess;
 Keywords=Miracast;Wi-Fi Display;Screen sharing;Cast;
 StartupNotify=true

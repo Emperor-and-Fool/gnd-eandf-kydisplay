@@ -1,4 +1,5 @@
-# Mirdispo — share a Plasma desktop on a wireless display
+# Kydisplay — share a Plasma desktop on a wireless display
+# Copyright (C) 2026 Kydisplay contributors
 # Copyright (C) 2026 Mirdispo contributors
 #
 # This program is free software: you can redistribute it and/or modify it
@@ -30,8 +31,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-PACKAGE = "mirdispo"
-APP_ID = "io.github.hencyber.Mirdispo"
+PACKAGE = "kydisplay"
+APP_ID = "nl.eandf.Kydisplay"
 _SOURCE_TREE = Path(__file__).resolve().parents[2]
 GPL_URL = "https://www.gnu.org/licenses/gpl-3.0.html"
 

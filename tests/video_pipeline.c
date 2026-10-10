@@ -154,7 +154,7 @@ run (GstElement *bin, gint refresh, gint seconds)
   GstElement *sink = gst_element_factory_make ("fakesink", NULL);
   /* The latency wfd_media_factory_create_pipeline() gives x264, unless a
    * different one is being tried. */
-  const gchar *latency_override = g_getenv ("MIRDISPO_TEST_LATENCY_MS");
+  const gchar *latency_override = g_getenv ("KYDISPLAY_TEST_LATENCY_MS");
   gint latency_ms = latency_override ? atoi (latency_override) : 120;
   GArray *gaps;
 

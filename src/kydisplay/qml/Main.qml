@@ -1,4 +1,5 @@
-// Mirdispo — share a Plasma desktop on a wireless display
+// Kydisplay — share a Plasma desktop on a wireless display
+// Copyright (C) 2026 Kydisplay contributors
 // Copyright (C) 2026 Mirdispo contributors
 //
 // This program is free software: you can redistribute it and/or modify it
@@ -28,9 +29,9 @@ Kirigami.ApplicationWindow {
     minimumWidth: 560
     minimumHeight: 420
     visible: true
-    title: "Mirdispo"
+    title: "Kydisplay"
 
-    // With a system tray, closing the window keeps Mirdispo running there,
+    // With a system tray, closing the window keeps Kydisplay running there,
     // so a cast can go on while the window is out of the way.
     onClosing: (close) => {
         if (tray && tray.available) {
@@ -46,7 +47,7 @@ Kirigami.ApplicationWindow {
 
     globalDrawer: Kirigami.GlobalDrawer {
         title: "Network Displays"
-        titleIcon: "io.github.hencyber.Mirdispo"
+        titleIcon: "nl.eandf.Kydisplay"
         actions: [
             Kirigami.Action {
                 text: "Displays"
@@ -450,7 +451,7 @@ Kirigami.ApplicationWindow {
                     Layout.preferredHeight: width
                 }
                 Kirigami.Heading {
-                    text: "Mirdispo"
+                    text: "Kydisplay"
                     level: 1
                     horizontalAlignment: Text.AlignHCenter
                     Layout.fillWidth: true
@@ -484,7 +485,7 @@ Kirigami.ApplicationWindow {
                 // way to reach the legal notices, so they live on their own
                 // page instead of filling this one.
                 Controls.Label {
-                    text: "© 2026 Mirdispo contributors · GPL-3.0-or-later"
+                    text: "© 2026 Kydisplay contributors · GPL-3.0-or-later"
                     horizontalAlignment: Text.AlignHCenter
                     opacity: 0.6
                     font.pointSize: Kirigami.Theme.smallFont.pointSize

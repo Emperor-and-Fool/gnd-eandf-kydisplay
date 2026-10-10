@@ -1,4 +1,5 @@
-# Mirdispo — share a Plasma desktop on a wireless display
+# Kydisplay — share a Plasma desktop on a wireless display
+# Copyright (C) 2026 Kydisplay contributors
 # Copyright (C) 2026 Mirdispo contributors
 #
 # This program is free software: you can redistribute it and/or modify it
@@ -24,8 +25,8 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from mirdispo import p2p
-from mirdispo.p2p import GroupFormationProbe, group_band, group_interfaces
+from kydisplay import p2p
+from kydisplay.p2p import GroupFormationProbe, group_band, group_interfaces
 
 
 class GroupInterfaceTests(unittest.TestCase):

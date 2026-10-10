@@ -1,4 +1,5 @@
-# Mirdispo — share a Plasma desktop on a wireless display
+# Kydisplay — share a Plasma desktop on a wireless display
+# Copyright (C) 2026 Kydisplay contributors
 # Copyright (C) 2026 Mirdispo contributors
 #
 # This program is free software: you can redistribute it and/or modify it
@@ -51,11 +52,11 @@ def main(argv=None):
     os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "org.kde.desktop")
     # QApplication rather than QGuiApplication, for the tray icon's menu.
     app = QApplication(sys.argv[:1])
-    QCoreApplication.setOrganizationName("Mirdispo")
-    QCoreApplication.setApplicationName("Mirdispo")
+    QCoreApplication.setOrganizationName("Kydisplay")
+    QCoreApplication.setApplicationName("Kydisplay")
     QCoreApplication.setApplicationVersion(__version__)
-    QGuiApplication.setDesktopFileName("io.github.hencyber.Mirdispo")
-    QGuiApplication.setWindowIcon(QIcon.fromTheme("io.github.hencyber.Mirdispo", QIcon.fromTheme("video-display")))
+    QGuiApplication.setDesktopFileName("nl.eandf.Kydisplay")
+    QGuiApplication.setWindowIcon(QIcon.fromTheme("nl.eandf.Kydisplay", QIcon.fromTheme("video-display")))
 
     engine = QQmlApplicationEngine()
     # Parent the context object to the engine so QML is torn down before the

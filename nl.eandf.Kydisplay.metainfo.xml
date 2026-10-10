@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.hencyber.Mirdispo</id>
+  <id>nl.eandf.Kydisplay</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
-  <name>Mirdispo</name>
+  <name>Kydisplay</name>
   <summary>Share your Plasma desktop with Miracast displays</summary>
-  <developer id="io.github.hencyber">
-    <name>Mirdispo contributors</name>
+  <developer id="nl.eandf">
+    <name>Kydisplay contributors</name>
   </developer>
-  <url type="homepage">https://github.com/hencyber/mirdispo</url>
-  <url type="bugtracker">https://github.com/hencyber/mirdispo/issues</url>
-  <url type="vcs-browser">https://github.com/hencyber/mirdispo</url>
+  <url type="homepage">https://git.redpie.nl/EmperorAndFoolICT-Mediaproductie/gnd-kydisplay-eandf</url>
+  <url type="bugtracker">https://git.redpie.nl/EmperorAndFoolICT-Mediaproductie/gnd-kydisplay-eandf/issues</url>
+  <url type="vcs-browser">https://git.redpie.nl/EmperorAndFoolICT-Mediaproductie/gnd-kydisplay-eandf</url>
   <description>
     <p>
-      Mirdispo is a Plasma-native Wi-Fi Display sender. It finds
+      Kydisplay is a Plasma-native Wi-Fi Display sender. It finds
       compatible Miracast receivers, reports hardware and codec readiness, and
       guides the user through a screen-sharing session.
     </p>
@@ -23,20 +23,24 @@
       by Benjamin Berg, Christian Glombek and contributors, which is included
       with a small set of documented fixes.
     </p>
+    <p>
+      The Plasma front end and the patch stack started from mirdispo, by the
+      mirdispo contributors.
+    </p>
   </description>
-  <launchable type="desktop-id">io.github.hencyber.Mirdispo.desktop</launchable>
+  <launchable type="desktop-id">nl.eandf.Kydisplay.desktop</launchable>
   <provides>
-    <binary>mirdispo</binary>
+    <binary>kydisplay</binary>
   </provides>
   <content_rating type="oars-1.1" />
   <screenshots>
     <screenshot type="default">
       <caption>Receivers found nearby</caption>
-      <image>https://raw.githubusercontent.com/hencyber/mirdispo/main/docs/screenshots/displays.png</image>
+      <image>https://git.redpie.nl/EmperorAndFoolICT-Mediaproductie/gnd-kydisplay-eandf/raw/branch/main/docs/screenshots/displays.png</image>
     </screenshot>
     <screenshot>
       <caption>Sharing the screen with a television</caption>
-      <image>https://raw.githubusercontent.com/hencyber/mirdispo/main/docs/screenshots/casting.png</image>
+      <image>https://git.redpie.nl/EmperorAndFoolICT-Mediaproductie/gnd-kydisplay-eandf/raw/branch/main/docs/screenshots/casting.png</image>
     </screenshot>
   </screenshots>
   <categories>
@@ -59,13 +63,13 @@
       <description>
         <p>Fixes sound dropping out and the picture stuttering, especially over Wi-Fi Direct. The encoder now keeps to its bitrate limit, which it never did: busy pictures came out in bursts no wireless link carries, and the backlog reached the sound.</p>
         <p>Frames reach the receiver evenly again; the shorter delay in 3.6.0 made them arrive unevenly.</p>
-        <p>While a picture is being sent, Mirdispo pauses the search for receivers, which made the Wi-Fi radio scan other channels every 20 seconds.</p>
+        <p>While a picture is being sent, Kydisplay pauses the search for receivers, which made the Wi-Fi radio scan other channels every 20 seconds.</p>
         <p>A receiver whose network address could not be looked up at first, for instance just after it woke up, is found again instead of only over Wi-Fi Direct.</p>
       </description>
     </release>
     <release version="3.6.0" date="2026-10-01">
       <description>
-        <p>Receivers that can show full HD at 60 frames per second in the H.264 high profile now get it, twice as smooth as before at the same resolution. Mirdispo used to limit every receiver to the baseline profile.</p>
+        <p>Receivers that can show full HD at 60 frames per second in the H.264 high profile now get it, twice as smooth as before at the same resolution. Kydisplay used to limit every receiver to the baseline profile.</p>
         <p>The picture reaches the receiver about 70 ms sooner.</p>
         <p>Receivers that take only one slice per picture get one, as they ask for.</p>
       </description>
@@ -92,19 +96,19 @@
     </release>
     <release version="3.3.1" date="2026-09-30">
       <description>
-        <p>Mirdispo finds its casting engine wherever it is installed, so installing from source into a prefix of your choice and running from a source checkout both work.</p>
+        <p>Kydisplay finds its casting engine wherever it is installed, so installing from source into a prefix of your choice and running from a source checkout both work.</p>
       </description>
     </release>
     <release version="3.3.0" date="2026-09-30">
       <description>
-        <p>Mirdispo has an icon in the system tray. Closing the window keeps it running there, and the tray shows what is being shared, stops sharing, and quits.</p>
-        <p>Stopping screen sharing from the desktop, for instance with Plasma's screen sharing indicator, is now respected. Mirdispo no longer takes it for a lost connection and reconnects.</p>
+        <p>Kydisplay has an icon in the system tray. Closing the window keeps it running there, and the tray shows what is being shared, stops sharing, and quits.</p>
+        <p>Stopping screen sharing from the desktop, for instance with Plasma's screen sharing indicator, is now respected. Kydisplay no longer takes it for a lost connection and reconnects.</p>
       </description>
     </release>
     <release version="3.2.1" date="2026-09-30">
       <description>
-        <p>Fixes a working cast being reported as failed. The stream now reports when the receiver is getting a picture, and Mirdispo shows the session as active from that, also for receivers reached over the network rather than Wi-Fi Direct.</p>
-        <p>Closing Mirdispo while nothing is being cast now stops the casting engine too, so an update always takes effect the next time Mirdispo starts.</p>
+        <p>Fixes a working cast being reported as failed. The stream now reports when the receiver is getting a picture, and Kydisplay shows the session as active from that, also for receivers reached over the network rather than Wi-Fi Direct.</p>
+        <p>Closing Kydisplay while nothing is being cast now stops the casting engine too, so an update always takes effect the next time Kydisplay starts.</p>
       </description>
     </release>
     <release version="3.2.0" date="2026-09-30">
@@ -115,12 +119,12 @@
     </release>
     <release version="3.1.0" date="2026-09-30">
       <description>
-        <p>The casting engine no longer needs GTK or libadwaita, so installing Mirdispo pulls in far less. It registers on D-Bus under its own name and can no longer collide with GNOME Network Displays running on the same desktop. It also runs inside a Flatpak sandbox.</p>
+        <p>The casting engine no longer needs GTK or libadwaita, so installing Kydisplay pulls in far less. It registers on D-Bus under its own name and can no longer collide with GNOME Network Displays running on the same desktop. It also runs inside a Flatpak sandbox.</p>
       </description>
     </release>
     <release version="3.0.0" date="2026-09-30">
       <description>
-        <p>The application is now called Mirdispo and replaces the kde-network-displays package. The About page credits GNOME Network Displays, whose engine does the casting, and the Licence page says whose trademarks the protocol names are.</p>
+        <p>The application is now called Kydisplay and replaces the kde-network-displays package. The About page credits GNOME Network Displays, whose engine does the casting, and the Licence page says whose trademarks the protocol names are.</p>
         <p>Diagnostics run from the command line find the casting backend, and any H.264 encoder the system has counts as a working video pipeline, not only OpenH264.</p>
       </description>
     </release>

@@ -1,4 +1,5 @@
-# Mirdispo — share a Plasma desktop on a wireless display
+# Kydisplay — share a Plasma desktop on a wireless display
+# Copyright (C) 2026 Kydisplay contributors
 # Copyright (C) 2026 Mirdispo contributors
 #
 # This program is free software: you can redistribute it and/or modify it
@@ -26,7 +27,7 @@ against one completes every step and sends no picture at all.
 
 A screen with something behind it has to be made by something that gives it a
 surface, and krfb-virtualmonitor does exactly that. What it makes is not a
-special case the rest of Mirdispo has to know about: Plasma registers it as an
+special case the rest of Kydisplay has to know about: Plasma registers it as an
 ordinary monitor named after whatever it was called, which the portal then
 offers beside the real ones. Everything downstream of the picker therefore
 carries on as if a second screen had been plugged in.
@@ -52,7 +53,7 @@ BINARY = "krfb-virtualmonitor"
 # What Plasma calls the output, which is the name it was asked for behind a
 # prefix of Plasma's own. The portal offers it under this name too, so it is
 # also what a person is looking for in the picker.
-MONITOR_NAME = "Mirdispo"
+MONITOR_NAME = "Kydisplay"
 OUTPUT_NAME = f"Virtual-{MONITOR_NAME}"
 
 DEFAULT_RESOLUTION = "1920x1080"

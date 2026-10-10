@@ -1,4 +1,5 @@
-# Mirdispo — share a Plasma desktop on a wireless display
+# Kydisplay — share a Plasma desktop on a wireless display
+# Copyright (C) 2026 Kydisplay contributors
 # Copyright (C) 2026 Mirdispo contributors
 #
 # This program is free software: you can redistribute it and/or modify it
@@ -100,13 +101,13 @@ def main():
         print(f"Qt QML unavailable: {error}")
         return 77
 
-    from mirdispo.backend import DisplayBackend
+    from kydisplay.backend import DisplayBackend
 
     app = QGuiApplication(sys.argv[:1])
     engine = QQmlApplicationEngine()
     backend = DisplayBackend(demo=True, diagnostic_collector=lambda *_: [], parent=engine)
     engine.rootContext().setContextProperty("displayBackend", backend)
-    engine.load(str(ROOT / "src/mirdispo/qml/Main.qml"))
+    engine.load(str(ROOT / "src/kydisplay/qml/Main.qml"))
 
     if not engine.rootObjects():
         print("the interface could not be loaded")
@@ -127,7 +128,7 @@ def main():
     # longer than the space for it: an un-elided label demands that width and
     # drags the button out of the column. The demo names are too short to
     # provoke it, so one is planted here.
-    from mirdispo.models import DisplayDevice
+    from kydisplay.models import DisplayDevice
 
     backend.devices.replace([
         DisplayDevice("demo:short", "TV", protocol=3),
