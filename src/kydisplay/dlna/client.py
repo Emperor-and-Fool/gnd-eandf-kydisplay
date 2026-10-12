@@ -75,6 +75,47 @@ AVTRANSPORT_TYPE = "urn:schemas-upnp-org:service:AVTransport:1"
 # to one that needs asking which.
 INSTANCE_ID = 0
 
+# The fourth protocolInfo field, which is where a server says what may be
+# done to a stream beyond playing it from the start.
+#
+# Sent only when the length is known, which is the same thing as saying
+# only for something finite: a live broadcast has nothing to seek within,
+# and claiming otherwise would invite a request that cannot be answered.
+#
+# OP=10 is time-seek yes, byte-seek no, and that pairing is the honest one
+# here. What the renderer is given is remuxed on the fly, so a byte offset
+# into it means nothing that could be worked back to a position in the
+# source; a time offset does, and is what ffmpeg can be restarted at.
+#
+# The flags below are set too, and do not currently reach the renderer.
+# gupnp-av stores them and then emits DLNA.ORG_FLAGS only when a
+# DLNA.ORG_PN is set alongside — confirmed by rendering it both ways. A
+# PN is the one thing already known to break casting on this television,
+# outright and including sites that had been working, so the flags are
+# set and left unemitted rather than bought at that price.
+#
+# They are kept because they cost nothing and record the intent: if OP
+# alone turns out not to be enough, the next thing to try is emitting
+# them without a PN, which means writing the resource element directly
+# instead of through this writer.
+#
+# Measured first, not assumed: with no seek capability advertised at all,
+# this television drew a position bar from the duration and then made no
+# further HTTP request when the scrubber was dragged — not a request we
+# answered badly, no request at all. Nothing proxy-side can answer a
+# question that is never asked, so saying this is the only way to find out
+# whether it would ask.
+#
+# The first three fields stay exactly as they were. Narrowing the content
+# format to the real MIME type broke casting once, and adding a
+# DLNA.ORG_PN broke it again including for sites that had been working;
+# both were reverted. If casting breaks again, this constant is the thing
+# to empty.
+SEEKABLE_FLAGS = (GUPnPAV.DLNAFlags.STREAMING_TRANSFER_MODE
+                  | GUPnPAV.DLNAFlags.BACKGROUND_TRANSFER_MODE
+                  | GUPnPAV.DLNAFlags.CONNECTION_STALL
+                  | GUPnPAV.DLNAFlags.DLNA_V15)
+
 
 class NoAvTransport(RuntimeError):
     """Raised when a device's own description has no AVTransport service,
@@ -152,7 +193,11 @@ def _metadata(title: str, uri: str, duration: int | None = None) -> str:
 
     resource = item.add_resource()
     resource.set_uri(uri)
-    resource.set_protocol_info(GUPnPAV.ProtocolInfo.new_from_string("http-get:*:*:*"))
+    protocol_info = GUPnPAV.ProtocolInfo.new_from_string("http-get:*:*:*")
+    if duration:
+        protocol_info.set_dlna_operation(GUPnPAV.DLNAOperation.TIMESEEK)
+        protocol_info.set_dlna_flags(SEEKABLE_FLAGS)
+    resource.set_protocol_info(protocol_info)
     # How long the thing runs, which is the only way a renderer can know:
     # the stream it is sent is MPEG-TS, which carries no length of its own,
     # so a television told nothing here has nothing to draw a position bar
