@@ -102,6 +102,24 @@ INSTANCE_ID = 0
 #
 # Leave this alone.
 
+# Whether to tell the renderer how long the content runs.
+#
+# Off while a suspicion is tested. Saying a length is what makes a
+# renderer treat a resource as a finite file rather than an open-ended
+# stream, and a renderer that thinks it has a file asks for byte ranges
+# and expects to be answered with one. This server answers every request
+# with a plain 200 and no length at all, which is coherent for a stream
+# and incoherent for a file — and a renderer given "Range: bytes=0-",
+# answered 200, has been seen resetting the connection one second later
+# and then refusing to play, which is what "file not recognized" looks
+# like from the other side.
+#
+# The question this switch exists to answer is whether those refusals
+# followed the duration being added. If they stop with this off, the
+# duration is not the thing to remove — answering Range is the thing to
+# add, and the bar comes back with it.
+SEND_DURATION = False
+
 
 class NoAvTransport(RuntimeError):
     """Raised when a device's own description has no AVTransport service,
@@ -189,7 +207,7 @@ def _metadata(title: str, uri: str, duration: int | None = None) -> str:
     #
     # Omitted rather than guessed when unknown. A live broadcast has no
     # length, and claiming one would describe the stream wrongly.
-    if duration:
+    if duration and SEND_DURATION:
         resource.set_duration(int(duration))
 
     return writer.get_string()
