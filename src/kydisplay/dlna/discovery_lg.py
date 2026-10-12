@@ -109,6 +109,35 @@ def scan_subnet(subnet_hosts) -> list[tuple[str, int]]:
     return sorted((ip, port) for ip, port in results if port is not None)
 
 
+# Confirmed tonight: KNOWN_PORTS is built from ports observed on past
+# boots and is not exhaustive — this TV landed on a port outside that
+# list at least once tonight. This wider range covers the cluster every
+# known port has fallen in so far; used once the curated list has
+# already come up empty, not as the first thing tried.
+WIDE_PORT_RANGE = range(1000, 2001)
+
+
+def scan_wide_range(ip: str) -> list[int]:
+    """Same as :func:`scan_known_ports` but across
+    :data:`WIDE_PORT_RANGE` — confirmed tonight at well under a second
+    for one IP."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=SCAN_WORKERS) as pool:
+        results = pool.map(lambda p: _port_open(ip, p), WIDE_PORT_RANGE)
+    return sorted(p for p in results if p is not None)
+
+
+def find_ip_via_ssap(subnet_hosts) -> str | None:
+    """The first IP in `subnet_hosts` answering on either of LG's fixed
+    SSAP ports (3000/3001) — confirmed tonight as a genuinely blind,
+    sub-second way to find an LG TV's address with zero prior knowledge:
+    unlike the MediaRenderer port, these do not rotate per boot."""
+    targets = [(ip, port) for ip in subnet_hosts for port in SSAP_PORTS]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=SCAN_WORKERS) as pool:
+        results = pool.map(lambda t: (t[0], _port_open(t[0], t[1])), targets)
+    found = sorted(ip for ip, port in results if port is not None)
+    return found[0] if found else None
+
+
 def fetch_description(ip: str, port: int, timeout: float = 3.0) -> str | None:
     """The raw device description at this candidate, or ``None`` if it is
     not one — several of LG's known ports are not UPnP descriptions at all

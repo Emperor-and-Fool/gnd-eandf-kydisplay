@@ -214,6 +214,31 @@ class DmrDiscovery:
                                    location=location, is_lg=True))
         return found
 
+    def find_lg_blind(self, subnet_hosts) -> DmrDevice | None:
+        """Find an LG renderer with zero prior knowledge — not even its
+        IP. Confirmed tonight as fast (~1s total) and reliable where
+        SSDP alone was not: the fixed-port SSAP scan finds the IP, the
+        wide-range scan finds the MediaRenderer's actual (boot-rotated)
+        port on it. Call this only once something independent — such as
+        the WFD device list's own name — already says the target is an
+        LG set; this does not itself try to confirm the vendor from
+        nothing, the same way :func:`lg_fallback` does not."""
+        ip = discovery_lg.find_ip_via_ssap(subnet_hosts)
+        if ip is None:
+            return None
+        for port in discovery_lg.scan_wide_range(ip):
+            xml_text = discovery_lg.fetch_description(ip, port)
+            if not xml_text:
+                continue
+            parsed = _parse_description(xml_text)
+            if parsed is None or "MediaRenderer" not in parsed["deviceType"]:
+                continue
+            location = f"http://{ip}:{port}/"
+            self._store.mark_verified(parsed["udn"], location, parsed["friendlyName"], True)
+            return DmrDevice(udn=parsed["udn"], name=parsed["friendlyName"],
+                             location=location, is_lg=True)
+        return None
+
     def stop(self) -> None:
         self._generic_cp.set_active(False)
         self._lg_cp.set_active(False)
