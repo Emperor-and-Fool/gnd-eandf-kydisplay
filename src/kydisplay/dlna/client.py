@@ -52,6 +52,8 @@ see :mod:`.wake` for what is and is not verified about it.
 
 from __future__ import annotations
 
+import logging
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -65,6 +67,8 @@ gi.require_version("GUPnPAV", "1.0")
 from gi.repository import GUPnPAV  # noqa: E402
 
 from . import wake
+
+logger = logging.getLogger(__name__)
 
 DEVICE_NS = "urn:schemas-upnp-org:device-1-0"
 SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"
@@ -245,6 +249,55 @@ def find_avtransport_control_url(location: str, fetch=None) -> str:
     raise NoAvTransport(f"{location} has no AVTransport service")
 
 
+# States that mean "still working on it". The second is this television's
+# own invention and not in the specification, which is why it is matched
+# as well as, not instead of, the standard one.
+TRANSITIONING = ("TRANSITIONING", "LG_TRANSITIONING")
+
+# How long to let a renderer finish taking a URI before asking it to
+# play. Generous: this one took five seconds merely to begin fetching.
+SETTLE_TIMEOUT = 20.0
+SETTLE_INTERVAL = 0.5
+
+
+def _transport_state(control_url: str, post) -> str | None:
+    body = (
+        f'<u:GetTransportInfo xmlns:u="{AVTRANSPORT_TYPE}">'
+        f'<InstanceID>{INSTANCE_ID}</InstanceID></u:GetTransportInfo>'
+    )
+    try:
+        root = ET.fromstring(post(control_url, "GetTransportInfo", body, timeout=10.0))
+    except Exception:
+        return None
+    for element in root.iter():
+        if element.tag.rsplit("}", 1)[-1] == "CurrentTransportState":
+            return element.text
+    return None
+
+
+def _wait_until_settled(control_url: str, post) -> str | None:
+    """Block until the renderer is no longer mid-transition.
+
+    Setting a URI is not instant and saying so is not the same as being
+    ready: this television answers SetAVTransportURI immediately and then
+    takes seconds before it even fetches the stream. Asking it to play
+    inside that window is asking for something it cannot do yet, which is
+    exactly what "701 Transition not available" says and what
+    LG_TRANSITIONING looks like from outside.
+
+    Returns whatever state it settled in, or the last one seen if it
+    never settles — the caller tries Play either way, because a renderer
+    that will not settle is no worse off for being asked."""
+    deadline = time.monotonic() + SETTLE_TIMEOUT
+    state = None
+    while time.monotonic() < deadline:
+        state = _transport_state(control_url, post)
+        if state is None or state not in TRANSITIONING:
+            return state
+        time.sleep(SETTLE_INTERVAL)
+    return state
+
+
 def play(location: str, stream_url: str, title: str = "", duration: int | None = None,
          mac: str | None = None, fetch=None, post=None) -> None:
     """Push ``stream_url`` to the renderer at ``location`` and start it.
@@ -267,6 +320,24 @@ def play(location: str, stream_url: str, title: str = "", duration: int | None =
 
     control_url = find_avtransport_control_url(location, fetch=fetch)
 
+    # Clear whatever came before, because leftover state is the other
+    # half of why this renderer refuses. It has needed an explicit Stop
+    # to become usable again many times, every one of them issued by hand
+    # after a cast had already failed. Issuing it first makes that
+    # routine rather than a rescue.
+    #
+    # A refusal here is ignored on purpose: "already stopped" is a
+    # perfectly good outcome and says nothing about whether the cast can
+    # proceed.
+    stop_body = (
+        f'<u:Stop xmlns:u="{AVTRANSPORT_TYPE}">'
+        f'<InstanceID>{INSTANCE_ID}</InstanceID></u:Stop>'
+    )
+    try:
+        post(control_url, "Stop", stop_body, timeout=10.0)
+    except Exception:
+        pass
+
     set_uri_body = (
         f'<u:SetAVTransportURI xmlns:u="{AVTRANSPORT_TYPE}">'
         f'<InstanceID>{INSTANCE_ID}</InstanceID>'
@@ -275,6 +346,14 @@ def play(location: str, stream_url: str, title: str = "", duration: int | None =
         f'</u:SetAVTransportURI>'
     )
     post(control_url, "SetAVTransportURI", set_uri_body)
+
+    # Answering SetAVTransportURI is not the same as being ready for it:
+    # this renderer answers at once and then takes seconds before it even
+    # fetches the stream. Play sent inside that window is the "701
+    # Transition not available" seen repeatedly, and plausibly why a
+    # renderer left mid-load sits in LG_TRANSITIONING and never finishes.
+    settled = _wait_until_settled(control_url, post)
+    logger.info("play: renderer settled in %s", settled or "an unknown state")
 
     play_body = (
         f'<u:Play xmlns:u="{AVTRANSPORT_TYPE}">'
