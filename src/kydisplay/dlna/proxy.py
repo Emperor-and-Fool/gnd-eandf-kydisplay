@@ -1,0 +1,211 @@
+# Kydisplay — share a Plasma desktop on a wireless display
+# Copyright (C) 2026 Kydisplay contributors
+#
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+# FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+# more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program. If not, see <https://www.gnu.org/licenses/>.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""Binds the DLNA proxy's listening socket, and remuxes a real source to
+MPEG-TS for it.
+
+The remux core recovered from an earlier session's prototype, proven
+against the real TV there for a direct MP4 URL before being lost (never
+committed — see the memory and mission docs from that night). ffmpeg's
+own input demuxer handles a direct file, an HLS VOD playlist, and a
+live HLS playlist identically — the same command remuxes any of the
+three to MPEG-TS, confirmed in the pipeline-findings mission doc. What
+:mod:`.source` classifies is not which ffmpeg command to run, but
+whether ffmpeg exiting on its own is normal (direct, HLS VOD both have
+a real end) or a fault worth reporting (HLS live only ever ends on an
+explicit Stop).
+"""
+
+from __future__ import annotations
+
+import http.server
+import logging
+import subprocess
+import sys
+import threading
+import urllib.parse
+from pathlib import Path
+
+from . import firewall
+from . import source as sourcelib
+
+logger = logging.getLogger(__name__)
+
+# Some CDNs refuse a request with no recognisable browser user agent.
+# Confirmed necessary in the recovered prototype; kept exactly as it was
+# proven there, not a guess at a value that might work.
+USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36")
+
+# Real stream-serving does not exist yet; this is a stand-in for proving
+# the whole path end to end — SOAP, TV-initiated fetch, actual decoded
+# playback — with one real file, not a 404 that cannot tell "reached and
+# rejected" apart from "never reached at all".
+_trial_url_path: str | None = None
+_trial_file: Path | None = None
+
+# Lets an external request fire a real dlnaCast on the already-running
+# app, the same call a real cast button will make later — this server
+# is already running inside that process, so it is the trigger channel
+# rather than building a separate one. Runs in this server's own
+# thread; the callback (backend.py's signal) is what makes landing on
+# the Qt/GUI thread safe, not anything here.
+_cast_trigger = None
+
+
+def set_cast_trigger(callback) -> None:
+    global _cast_trigger
+    _cast_trigger = callback
+
+
+def set_trial_file(path: Path | str, url_path: str = "/trial") -> None:
+    global _trial_url_path, _trial_file
+    _trial_url_path = url_path
+    _trial_file = Path(path)
+
+
+# The real source: a URL ffmpeg remuxes to MPEG-TS on each request, not a
+# file read from disk. Classified lazily, inside the request itself (the
+# HTTP server's own thread), not here — classifying means fetching the
+# URL, and set_source is called from the GUI thread.
+_source_url: str | None = None
+_source_url_path: str = "/stream.ts"
+
+
+def set_source(url: str, url_path: str = "/stream.ts") -> None:
+    global _source_url, _source_url_path
+    _source_url = url
+    _source_url_path = url_path
+
+
+class _TrialHandler(http.server.BaseHTTPRequestHandler):
+    """Serves the one registered trial file at its one registered path;
+    404 for everything else, same as before this existed."""
+
+    def do_HEAD(self):
+        if _trial_file is not None and self.path == _trial_url_path:
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Content-Length", str(_trial_file.stat().st_size))
+            self.end_headers()
+            return
+        if _source_url is not None and self.path == _source_url_path:
+            # No ffmpeg spawn for HEAD — a remux has no fixed length to
+            # report in the first place, and spawning one just to answer
+            # a presence check was the exact bug the trial file's own
+            # HEAD handler was added to fix, applied here too.
+            self.send_response(200)
+            self.send_header("Content-Type", "video/vnd.dlna.mpeg-tts")
+            self.end_headers()
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def do_GET(self):
+        if _trial_file is not None and self.path == _trial_url_path:
+            data = _trial_file.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if _source_url is not None and self.path == _source_url_path:
+            self._serve_source()
+            return
+        parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path == "/__trigger-cast" and _cast_trigger is not None:
+            query = urllib.parse.parse_qs(parsed.query)
+            location = query.get("location", [""])[0]
+            url = query.get("url", [""])[0]
+            title = query.get("title", [""])[0]
+            logger.info("proxy: /__trigger-cast location=%s url=%s", location, url)
+            _cast_trigger(location, url, title)
+            self.send_response(204)
+            self.end_headers()
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def _serve_source(self):
+        kind = sourcelib.classify(_source_url)
+        logger.info("proxy: serving source kind=%s url=%s", kind, _source_url)
+        self.send_response(200)
+        self.send_header("Content-Type", "video/vnd.dlna.mpeg-tts")
+        self.end_headers()
+        proc = subprocess.Popen(
+            ["ffmpeg", "-nostdin", "-loglevel", "warning",
+             "-user_agent", USER_AGENT, "-i", _source_url,
+             "-c", "copy", "-bsf:v", "h264_mp4toannexb",
+             "-mpegts_flags", "system_b", "-f", "mpegts", "pipe:1"],
+            stdout=subprocess.PIPE, stderr=sys.stderr,
+        )
+        try:
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            proc.kill()
+            proc.wait()
+        # A direct source or a finite HLS VOD playlist ending is ffmpeg
+        # completing its job; the same thing happening on a live playlist
+        # means the source dropped unexpectedly, not that playback
+        # finished — worth a log line distinguishing the two, nothing
+        # more yet (no retry/recovery built here).
+        if kind == sourcelib.SourceKind.HLS_LIVE:
+            logger.warning("proxy: ffmpeg for a live source ended (code=%s) — "
+                           "not a normal completion for live content", proc.returncode)
+
+    def log_message(self, format, *args):
+        logger.info("proxy: %s - %s", self.address_string(), format % args)
+
+
+_server: http.server.ThreadingHTTPServer | None = None
+_thread: threading.Thread | None = None
+
+
+def start() -> bool:
+    """Bind and listen on :data:`firewall.DLNA_PORT`, in a background
+    thread. Idempotent — calling this again while already running does
+    nothing. Returns whether a listening socket exists afterward."""
+    global _server, _thread
+    if _server is not None:
+        return True
+    try:
+        _server = http.server.ThreadingHTTPServer(("0.0.0.0", firewall.DLNA_PORT), _TrialHandler)
+    except OSError:
+        logger.exception("proxy.start: could not bind port %s", firewall.DLNA_PORT)
+        _server = None
+        return False
+    _thread = threading.Thread(target=_server.serve_forever, daemon=True)
+    _thread.start()
+    logger.info("proxy.start: listening on 0.0.0.0:%s", firewall.DLNA_PORT)
+    return True
+
+
+def stop() -> None:
+    global _server, _thread
+    if _server is not None:
+        _server.shutdown()
+        _server.server_close()
+        _server = None
+        _thread = None

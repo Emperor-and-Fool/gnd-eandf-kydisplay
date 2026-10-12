@@ -41,6 +41,7 @@ def parser():
     result.add_argument("--demo", action="store_true", help="use deterministic virtual displays")
     result.add_argument("--diagnostics", action="store_true", help="print diagnostics as JSON and exit")
     result.add_argument("--exit-after", type=float, metavar="SECONDS", help=argparse.SUPPRESS)
+    result.add_argument("--trial-file", metavar="PATH", help=argparse.SUPPRESS)
     return result
 
 
@@ -62,6 +63,15 @@ def main(argv=None):
     QCoreApplication.setApplicationVersion(__version__)
     QGuiApplication.setDesktopFileName("nl.eandf.Kydisplay")
     QGuiApplication.setWindowIcon(QIcon.fromTheme("nl.eandf.Kydisplay", QIcon.fromTheme("video-display")))
+
+    # Before the QML engine loads: Main.qml's startup check tests whether
+    # port 7235 is actually reachable, and that question only has a true
+    # answer once something is listening on it.
+    from .dlna import proxy
+
+    if args.trial_file:
+        proxy.set_trial_file(args.trial_file)
+    proxy.start()
 
     # Must happen before DisplayBackend is constructed below — p2p.py's
     # P2PDeviceWatcher calls dbus.SystemBus() during that construction,
@@ -93,6 +103,7 @@ def main(argv=None):
         QTimer.singleShot(max(0, int(args.exit_after * 1000)), app.quit)
     QTimer.singleShot(0, backend.scan)
     app.aboutToQuit.connect(backend.shutdown)
+    app.aboutToQuit.connect(proxy.stop)
     return app.exec()
 
 
