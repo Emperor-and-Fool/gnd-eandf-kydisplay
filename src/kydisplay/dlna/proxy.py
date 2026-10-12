@@ -148,6 +148,16 @@ def ffmpeg_command(url: str, kind: sourcelib.SourceKind) -> list[str]:
     return command
 
 
+# Headers a renderer uses to ask for part of something rather than all of
+# it. Logged whenever they appear, because what this TV actually asks for
+# is the only way to know what it would need to be given: it draws a
+# position bar from the duration in the DIDL-Lite but will not scrub, and
+# whether that is because it never asks, or asks in a way nothing here
+# answers, is not something to guess at.
+SEEK_HEADERS = ("Range", "TimeSeekRange.dlna.org", "PlaySpeed.dlna.org",
+                "getcontentFeatures.dlna.org", "transferMode.dlna.org")
+
+
 class _TrialHandler(http.server.BaseHTTPRequestHandler):
     """Serves the one registered trial file at its one registered path;
     404 for everything else, same as before this existed."""
@@ -160,6 +170,7 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
         if _source_url is not None and self.path == _source_url_path:
+            self._log_seek_headers("HEAD")
             # No ffmpeg spawn for HEAD — a remux has no fixed length to
             # report in the first place, and spawning one just to answer
             # a presence check was the exact bug the trial file's own
@@ -197,7 +208,16 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(404)
         self.end_headers()
 
+    def _log_seek_headers(self, method: str):
+        asked = {name: self.headers[name] for name in SEEK_HEADERS if self.headers.get(name)}
+        if asked:
+            logger.info("proxy: %s %s asked for %s", method, self.path, asked)
+        else:
+            logger.info("proxy: %s %s sent no seek headers (all of: %s)",
+                        method, self.path, ", ".join(SEEK_HEADERS))
+
     def _serve_source(self):
+        self._log_seek_headers("GET")
         kind = sourcelib.classify(_source_url)
         logger.info("proxy: serving source kind=%s url=%s", kind, _source_url)
         self.send_response(200)
