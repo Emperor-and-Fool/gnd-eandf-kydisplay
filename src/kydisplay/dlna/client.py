@@ -104,21 +104,30 @@ INSTANCE_ID = 0
 
 # Whether to tell the renderer how long the content runs.
 #
-# Off while a suspicion is tested. Saying a length is what makes a
-# renderer treat a resource as a finite file rather than an open-ended
-# stream, and a renderer that thinks it has a file asks for byte ranges
-# and expects to be answered with one. This server answers every request
-# with a plain 200 and no length at all, which is coherent for a stream
-# and incoherent for a file — and a renderer given "Range: bytes=0-",
-# answered 200, has been seen resetting the connection one second later
-# and then refusing to play, which is what "file not recognized" looks
-# like from the other side.
+# Back on, having been off long enough to clear it of the refusals. It
+# was switched off on the suspicion that declaring a length made the
+# television expect a file it could ask byte ranges of; with it off, the
+# refusals carried on exactly as before, so that was not it.
 #
-# The question this switch exists to answer is whether those refusals
-# followed the duration being added. If they stop with this off, the
-# duration is not the thing to remove — answering Range is the thing to
-# add, and the bar comes back with it.
-SEND_DURATION = False
+# What the television said about itself while refused is the reason it is
+# on again rather than merely cleared:
+#
+#   CurrentTransportState   LG_TRANSITIONING
+#   CurrentTransportStatus  OK
+#   CurrentURI              the stream, accepted
+#   MediaDuration           0:00:00
+#
+# Status OK, which rules out the content: it is not refusing what it was
+# sent. It is stuck part-way into starting, holding a URI it accepted and
+# no idea how long that URI runs — because nothing told it, and MPEG-TS
+# carries no length of its own. A renderer with no duration has nothing
+# to build a playback session around, which is a plausible reason to
+# never finish transitioning.
+#
+# So the length is given back. If it still cannot finish, nothing is lost
+# — the position bar comes back either way, and the next question is the
+# order of the calls rather than their contents.
+SEND_DURATION = True
 
 
 class NoAvTransport(RuntimeError):
