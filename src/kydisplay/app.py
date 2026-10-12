@@ -58,6 +58,17 @@ def main(argv=None):
     QGuiApplication.setDesktopFileName("nl.eandf.Kydisplay")
     QGuiApplication.setWindowIcon(QIcon.fromTheme("nl.eandf.Kydisplay", QIcon.fromTheme("video-display")))
 
+    # Must happen before DisplayBackend is constructed below — p2p.py's
+    # P2PDeviceWatcher calls dbus.SystemBus() during that construction,
+    # and dbus-python shares one connection per process: whichever call
+    # makes it first decides whether that shared connection has a main
+    # loop at all. Moved to here (was: before QApplication) to test
+    # whether running this earlier than GND's own SessionBus connection
+    # is what changed its scan behaviour tonight.
+    import dbus.mainloop.glib
+
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+
     engine = QQmlApplicationEngine()
     # Parent the context object to the engine so QML is torn down before the
     # backend. Otherwise bindings briefly see a null object during shutdown.
