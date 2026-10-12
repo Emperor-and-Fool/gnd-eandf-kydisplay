@@ -35,6 +35,7 @@ end)."""
 
 from __future__ import annotations
 
+import subprocess
 import urllib.parse
 import urllib.request
 from enum import Enum
@@ -64,6 +65,38 @@ class SourceKind(Enum):
     DIRECT = "direct"
     HLS_VOD = "hls_vod"
     HLS_LIVE = "hls_live"
+
+
+def has_b_frames(url: str, timeout: float = 25.0) -> int | None:
+    """How many frames a decoder must hold back to play this in order, or
+    ``None`` if it could not be asked.
+
+    Zero means every frame stands on its own. Anything above it means the
+    stream is sent out of display order and has to be reordered, which is
+    the thing this television has been seen unable to start on: two files
+    from one uploader, both ``has_b_frames=2``, both accepted and then
+    stuck part-way into starting, while everything that plays is either
+    zero or arrives already in MPEG-TS.
+
+    Asked of the source rather than guessed from the profile name, because
+    the name does not answer it: one file that plays is Main profile with
+    no reordering at all, and one that fails is Main profile with it. The
+    profile says what is permitted, this says what is actually there."""
+    try:
+        done = subprocess.run(
+            ["ffprobe", "-v", "error", "-user_agent", USER_AGENT,
+             "-select_streams", "v:0",
+             "-show_entries", "stream=has_b_frames",
+             "-of", "default=noprint_wrappers=1:nokey=1", url],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    first = done.stdout.strip().splitlines()
+    try:
+        return int(first[0])
+    except (IndexError, ValueError):
+        return None
 
 
 def _fetch_text(url: str, max_bytes: int | None = None, timeout: float = 5.0) -> str | None:

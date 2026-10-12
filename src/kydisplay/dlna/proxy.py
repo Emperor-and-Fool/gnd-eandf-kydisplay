@@ -107,7 +107,47 @@ def set_source(url: str, url_path: str = "/stream.ts") -> None:
     _source_url_path = url_path
 
 
-def ffmpeg_command(url: str, kind: sourcelib.SourceKind) -> list[str]:
+# What to encode with when a stream has to be rebuilt rather than
+# repackaged.
+#
+# This is the combination production DLNA servers settled on for these
+# receivers — Universal Media Server, Serviio, Plex and Jellyfin all
+# re-encode rather than trust an LG with an arbitrary source stream, and
+# all of them aim at the same target. Two properties matter and both are
+# properties of baseline:
+#
+#   no B-frames, so no frame waits for one that comes after it
+#   no CABAC, which the same decoders are reported to struggle with
+#
+# "-profile:v baseline" gives both by definition; "-bf 0" states the
+# first outright rather than relying on the profile to imply it.
+#
+# Not invented here, and found independently twice: the Miracast engine
+# in this same project sets b-frames to 0 on its own encoder (patch 0045)
+# with a comment saying a frame may not wait for one that comes after it.
+# Same receiver family, same constraint, different route.
+#
+# Software rather than the graphics chip, deliberately. A VAAPI pipeline
+# was tried first and did not produce output, and this is the line with
+# production mileage behind it; ultrafast and zerolatency keep the cost
+# moderate. Encoding on the processor's own graphics is worth revisiting
+# once this is known to fix anything, not while it is still the thing
+# being tested.
+#
+# Audio is never touched: it is already AAC, which this receiver plays,
+# and re-encoding it would cost quality for nothing.
+REBUILD_ARGS = [
+    "-c:v", "libx264",
+    "-preset", "ultrafast",
+    "-tune", "zerolatency",
+    "-bf", "0",
+    "-profile:v", "baseline",
+    "-c:a", "copy",
+]
+
+
+def ffmpeg_command(url: str, kind: sourcelib.SourceKind,
+                   rebuild: bool = False) -> list[str]:
     """The remux command for one source. A plain function taking the kind
     rather than reading it, so what each kind is sent can be checked
     without a network, a renderer, or a running server.
@@ -140,11 +180,16 @@ def ffmpeg_command(url: str, kind: sourcelib.SourceKind) -> list[str]:
     command = ["ffmpeg", "-nostdin", "-loglevel", "warning"]
     if kind in (sourcelib.SourceKind.HLS_VOD, sourcelib.SourceKind.HLS_LIVE):
         command += ["-extension_picky", "0"]
-    command += [
-        "-user_agent", USER_AGENT, "-i", url,
-        "-c", "copy", "-bsf:v", "h264_mp4toannexb",
-        "-mpegts_flags", "system_b", "-f", "mpegts", "pipe:1",
-    ]
+    command += ["-user_agent", USER_AGENT, "-i", url]
+    if rebuild:
+        # Rebuilt rather than repackaged. No bitstream filter here: the
+        # encoder emits what the muxer wants directly, and the filter
+        # exists only to re-frame bytes that are being passed through
+        # untouched.
+        command += REBUILD_ARGS
+    else:
+        command += ["-c", "copy", "-bsf:v", "h264_mp4toannexb"]
+    command += ["-mpegts_flags", "system_b", "-f", "mpegts", "pipe:1"]
     return command
 
 
@@ -199,14 +244,36 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
 
     def _serve_source(self):
         kind = sourcelib.classify(_source_url)
-        logger.info("proxy: serving source kind=%s url=%s", kind, _source_url)
+
+        # Whether this has to be rebuilt instead of repackaged.
+        #
+        # Only asked of a direct source. Anything arriving as HLS is
+        # already MPEG-TS and is only being re-wrapped, which has played
+        # on this receiver every time — including a stream whose frames
+        # do need reordering. A direct file is converted rather than
+        # re-wrapped, and the two that have never played are both direct
+        # files needing reordering, so that is the case worth paying to
+        # avoid.
+        #
+        # A source that cannot be asked is left alone rather than rebuilt
+        # on suspicion: repackaging is what works for almost everything,
+        # and spending the graphics chip on a guess would make the common
+        # case worse to protect the rare one.
+        rebuild = False
+        if kind is sourcelib.SourceKind.DIRECT:
+            frames = sourcelib.has_b_frames(_source_url)
+            rebuild = bool(frames)
+            logger.info("proxy: direct source has_b_frames=%s -> %s",
+                        frames, "rebuilding" if rebuild else "repackaging")
+        logger.info("proxy: serving source kind=%s rebuild=%s url=%s",
+                    kind, rebuild, _source_url)
         self.send_response(200)
         self.send_header("Content-Type", "video/vnd.dlna.mpeg-tts")
         self.end_headers()
         if _stream_started_trigger is not None:
             _stream_started_trigger()
         proc = subprocess.Popen(
-            ffmpeg_command(_source_url, kind),
+            ffmpeg_command(_source_url, kind, rebuild=rebuild),
             stdout=subprocess.PIPE, stderr=sys.stderr,
         )
         try:
