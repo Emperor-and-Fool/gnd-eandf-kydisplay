@@ -159,19 +159,6 @@ class PlayingSource:
     title: str
 
 
-@dataclass(frozen=True)
-class _Player:
-    """One MPRIS player as it describes itself, playing or not. Kept
-    separate from :class:`PlayingSource`, which is only ever something
-    worth casting, because deciding what is worth casting sometimes needs
-    to look at players that are not."""
-
-    bus_name: str
-    status: str
-    url: str
-    title: str
-
-
 def _player_names(bus) -> list[str]:
     import dbus
 
@@ -199,22 +186,6 @@ class MprisWatcher:
             bus = dbus.SessionBus()
         self.bus = bus
 
-    def players(self) -> list[_Player]:
-        """Every MPRIS player on the bus, as it describes itself."""
-        found = []
-        for name in _player_names(self.bus):
-            try:
-                status, metadata = _playback_state(self.bus, name)
-            except Exception:
-                continue
-            found.append(_Player(
-                bus_name=name,
-                status=str(status),
-                url=str(metadata.get("xesam:url") or ""),
-                title=str(metadata.get("xesam:title") or ""),
-            ))
-        return found
-
     def playing(self) -> list[PlayingSource]:
         """Every player reporting ``Playing`` with a URL, in bus order.
 
@@ -222,47 +193,18 @@ class MprisWatcher:
         started from it would show anybody watching. Split out from
         :meth:`current_source` so the gathering can be tested apart from
         the choosing, which is where the judgement is."""
-        return [
-            PlayingSource(bus_name=p.bus_name, url=p.url, title=p.title)
-            for p in self.players() if p.status == "Playing" and p.url
-        ]
-
-    def _paired_source(self, players: list[_Player]) -> PlayingSource | None:
-        """What to cast when no single player both claims to be playing
-        and knows what it is playing.
-
-        Seen on Rumble in Brave: the extension held the page URL but
-        reported Paused, while Brave's own MPRIS reported Playing and
-        published no URL at all. Each had half the answer and neither
-        passed the test on its own, so a video plainly playing registered
-        as nothing playing.
-
-        They are halves of the same browser, so they are paired by it —
-        the process tree already tells us which browser each player
-        belongs to. A browser counts as playing if any of its players says
-        so, and the URL is then taken from whichever of its players
-        actually has one.
-
-        Deliberately the fallback and not the rule: it trusts a URL from a
-        player that says it is paused, which is only reasonable once no
-        player has made the straightforward claim."""
-        playing_browsers = set()
-        for player in players:
-            if player.status == "Playing":
-                browser = browser_for(player.bus_name, bus=self.bus)
-                if browser:
-                    playing_browsers.add(browser)
-        if not playing_browsers:
-            return None
-
-        candidates = []
-        for player in players:
-            if not player.url:
+        found = []
+        for name in _player_names(self.bus):
+            try:
+                status, metadata = _playback_state(self.bus, name)
+            except Exception:
                 continue
-            if browser_for(player.bus_name, bus=self.bus) in playing_browsers:
-                candidates.append(PlayingSource(
-                    bus_name=player.bus_name, url=player.url, title=player.title))
-        return self.choose(candidates)
+            url = str(metadata.get("xesam:url") or "")
+            if status != "Playing" or not url:
+                continue
+            title = str(metadata.get("xesam:title") or "")
+            found.append(PlayingSource(bus_name=name, url=url, title=title))
+        return found
 
     @staticmethod
     def choose(candidates: list[PlayingSource]) -> PlayingSource | None:
@@ -282,21 +224,8 @@ class MprisWatcher:
         return candidates[0] if candidates else None
 
     def current_source(self) -> PlayingSource | None:
-        """The page a browser is playing right now, or ``None``.
-
-        The straightforward case first — a player that says it is playing
-        and says what — because it is the common one and costs only the
-        D-Bus reads already made. Only when nothing makes that claim does
-        this fall back to pairing players by browser, which walks process
-        trees and is not worth doing on a timer for the usual answer."""
-        players = self.players()
-        direct = [
-            PlayingSource(bus_name=p.bus_name, url=p.url, title=p.title)
-            for p in players if p.status == "Playing" and p.url
-        ]
-        if direct:
-            return self.choose(direct)
-        return self._paired_source(players)
+        """The page a browser is playing right now, or ``None``."""
+        return self.choose(self.playing())
 
 
 class MprisListener:

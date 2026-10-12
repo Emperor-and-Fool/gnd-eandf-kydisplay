@@ -52,8 +52,6 @@ see :mod:`.wake` for what is and is not verified about it.
 
 from __future__ import annotations
 
-import logging
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -68,8 +66,6 @@ from gi.repository import GUPnPAV  # noqa: E402
 
 from . import wake
 
-logger = logging.getLogger(__name__)
-
 DEVICE_NS = "urn:schemas-upnp-org:device-1-0"
 SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"
 AVTRANSPORT_TYPE = "urn:schemas-upnp-org:service:AVTransport:1"
@@ -78,60 +74,6 @@ AVTRANSPORT_TYPE = "urn:schemas-upnp-org:service:AVTransport:1"
 # renderer a television is. The specification allows more; nothing here casts
 # to one that needs asking which.
 INSTANCE_ID = 0
-
-# protocolInfo stays the bare wildcard. Three attempts to say anything
-# more in it have now been made against this television and all three
-# broke casting:
-#
-#   contentFormat narrowed to video/vnd.dlna.mpeg-tts ... would not connect
-#   DLNA.ORG_PN=MPEG_TS_SD_EU_ISO added ................ broke every site,
-#                                                        including YouTube,
-#                                                        which had worked
-#   DLNA.ORG_OP=10 on finite content only .............. first cast started
-#                                                        and then dropped,
-#                                                        "file no longer
-#                                                        recognized"
-#
-# The third was worth trying and is worth recording as settled: with
-# nothing advertised, the set draws a position bar from the duration and
-# then issues no HTTP request at all when the scrubber is dragged — not a
-# request answered badly, no request. So it will not ask to seek unless
-# told it may, and telling it costs the stream. Both halves measured, not
-# reasoned.
-#
-# That closes time-seek on this device by way of this field. Anything
-# further on scrubbing has to come from somewhere other than protocolInfo
-# — serving a container the renderer can seek natively, rather than
-# persuading it to seek a remux.
-#
-# Leave this alone.
-
-# Whether to tell the renderer how long the content runs.
-#
-# Back on, having been off long enough to clear it of the refusals. It
-# was switched off on the suspicion that declaring a length made the
-# television expect a file it could ask byte ranges of; with it off, the
-# refusals carried on exactly as before, so that was not it.
-#
-# What the television said about itself while refused is the reason it is
-# on again rather than merely cleared:
-#
-#   CurrentTransportState   LG_TRANSITIONING
-#   CurrentTransportStatus  OK
-#   CurrentURI              the stream, accepted
-#   MediaDuration           0:00:00
-#
-# Status OK, which rules out the content: it is not refusing what it was
-# sent. It is stuck part-way into starting, holding a URI it accepted and
-# no idea how long that URI runs — because nothing told it, and MPEG-TS
-# carries no length of its own. A renderer with no duration has nothing
-# to build a playback session around, which is a plausible reason to
-# never finish transitioning.
-#
-# So the length is given back. If it still cannot finish, nothing is lost
-# — the position bar comes back either way, and the next question is the
-# order of the calls rather than their contents.
-SEND_DURATION = True
 
 
 class NoAvTransport(RuntimeError):
@@ -199,7 +141,7 @@ def _describe_fault(action: str, status: int, fault_body: str) -> tuple[str, str
     return f"{action} failed: HTTP {status}", None
 
 
-def _metadata(title: str, uri: str, duration: int | None = None) -> str:
+def _metadata(title: str, uri: str) -> str:
     writer = GUPnPAV.DIDLLiteWriter.new(None)
     item = writer.add_item()
     item.set_id("0")
@@ -211,17 +153,6 @@ def _metadata(title: str, uri: str, duration: int | None = None) -> str:
     resource = item.add_resource()
     resource.set_uri(uri)
     resource.set_protocol_info(GUPnPAV.ProtocolInfo.new_from_string("http-get:*:*:*"))
-    # How long the thing runs, which is the only way a renderer can know:
-    # the stream it is sent is MPEG-TS, which carries no length of its own,
-    # so a television told nothing here has nothing to draw a position bar
-    # from. Written as a duration attribute on the resource — not into
-    # protocolInfo, which stays the bare wildcard it has to be: narrowing
-    # that field broke casting outright once and was reverted.
-    #
-    # Omitted rather than guessed when unknown. A live broadcast has no
-    # length, and claiming one would describe the stream wrongly.
-    if duration and SEND_DURATION:
-        resource.set_duration(int(duration))
 
     return writer.get_string()
 
@@ -249,57 +180,8 @@ def find_avtransport_control_url(location: str, fetch=None) -> str:
     raise NoAvTransport(f"{location} has no AVTransport service")
 
 
-# States that mean "still working on it". The second is this television's
-# own invention and not in the specification, which is why it is matched
-# as well as, not instead of, the standard one.
-TRANSITIONING = ("TRANSITIONING", "LG_TRANSITIONING")
-
-# How long to let a renderer finish taking a URI before asking it to
-# play. Generous: this one took five seconds merely to begin fetching.
-SETTLE_TIMEOUT = 20.0
-SETTLE_INTERVAL = 0.5
-
-
-def _transport_state(control_url: str, post) -> str | None:
-    body = (
-        f'<u:GetTransportInfo xmlns:u="{AVTRANSPORT_TYPE}">'
-        f'<InstanceID>{INSTANCE_ID}</InstanceID></u:GetTransportInfo>'
-    )
-    try:
-        root = ET.fromstring(post(control_url, "GetTransportInfo", body, timeout=10.0))
-    except Exception:
-        return None
-    for element in root.iter():
-        if element.tag.rsplit("}", 1)[-1] == "CurrentTransportState":
-            return element.text
-    return None
-
-
-def _wait_until_settled(control_url: str, post) -> str | None:
-    """Block until the renderer is no longer mid-transition.
-
-    Setting a URI is not instant and saying so is not the same as being
-    ready: this television answers SetAVTransportURI immediately and then
-    takes seconds before it even fetches the stream. Asking it to play
-    inside that window is asking for something it cannot do yet, which is
-    exactly what "701 Transition not available" says and what
-    LG_TRANSITIONING looks like from outside.
-
-    Returns whatever state it settled in, or the last one seen if it
-    never settles — the caller tries Play either way, because a renderer
-    that will not settle is no worse off for being asked."""
-    deadline = time.monotonic() + SETTLE_TIMEOUT
-    state = None
-    while time.monotonic() < deadline:
-        state = _transport_state(control_url, post)
-        if state is None or state not in TRANSITIONING:
-            return state
-        time.sleep(SETTLE_INTERVAL)
-    return state
-
-
-def play(location: str, stream_url: str, title: str = "", duration: int | None = None,
-         mac: str | None = None, fetch=None, post=None) -> None:
+def play(location: str, stream_url: str, title: str = "", mac: str | None = None,
+         fetch=None, post=None) -> None:
     """Push ``stream_url`` to the renderer at ``location`` and start it.
 
     ``location`` is a :class:`~kydisplay.dlna.discovery.DmrDevice`'s
@@ -320,40 +202,14 @@ def play(location: str, stream_url: str, title: str = "", duration: int | None =
 
     control_url = find_avtransport_control_url(location, fetch=fetch)
 
-    # Clear whatever came before, because leftover state is the other
-    # half of why this renderer refuses. It has needed an explicit Stop
-    # to become usable again many times, every one of them issued by hand
-    # after a cast had already failed. Issuing it first makes that
-    # routine rather than a rescue.
-    #
-    # A refusal here is ignored on purpose: "already stopped" is a
-    # perfectly good outcome and says nothing about whether the cast can
-    # proceed.
-    stop_body = (
-        f'<u:Stop xmlns:u="{AVTRANSPORT_TYPE}">'
-        f'<InstanceID>{INSTANCE_ID}</InstanceID></u:Stop>'
-    )
-    try:
-        post(control_url, "Stop", stop_body, timeout=10.0)
-    except Exception:
-        pass
-
     set_uri_body = (
         f'<u:SetAVTransportURI xmlns:u="{AVTRANSPORT_TYPE}">'
         f'<InstanceID>{INSTANCE_ID}</InstanceID>'
         f'<CurrentURI>{saxutils.escape(stream_url)}</CurrentURI>'
-        f'<CurrentURIMetaData>{saxutils.escape(_metadata(title, stream_url, duration))}</CurrentURIMetaData>'
+        f'<CurrentURIMetaData>{saxutils.escape(_metadata(title, stream_url))}</CurrentURIMetaData>'
         f'</u:SetAVTransportURI>'
     )
     post(control_url, "SetAVTransportURI", set_uri_body)
-
-    # Answering SetAVTransportURI is not the same as being ready for it:
-    # this renderer answers at once and then takes seconds before it even
-    # fetches the stream. Play sent inside that window is the "701
-    # Transition not available" seen repeatedly, and plausibly why a
-    # renderer left mid-load sits in LG_TRANSITIONING and never finishes.
-    settled = _wait_until_settled(control_url, post)
-    logger.info("play: renderer settled in %s", settled or "an unknown state")
 
     play_body = (
         f'<u:Play xmlns:u="{AVTRANSPORT_TYPE}">'
@@ -365,39 +221,6 @@ def play(location: str, stream_url: str, title: str = "", duration: int | None =
     # firing on a call that was slow, not failed, reporting a real success
     # as a failure and skipping everything castActive gates.
     post(control_url, "Play", play_body, timeout=90.0)
-
-
-def transport_info(location: str, fetch=None, post=None) -> dict[str, str]:
-    """What the renderer says about its own transport: at least
-    ``CurrentTransportState`` (STOPPED, PLAYING, TRANSITIONING…) and
-    ``CurrentTransportStatus`` (OK, ERROR_OCCURRED).
-
-    Worth having because the renderer's answer to an action is close to
-    useless on its own. This television has returned 501 "Action Failed"
-    while playing perfectly, returned 501 while failing, and simply not
-    answered at all — three outcomes, one code, no information. Its own
-    view of its state is a different question with a real answer.
-
-    Read-only: it asks and changes nothing, so it is safe to call after a
-    failure without disturbing whatever the renderer is doing."""
-    fetch = fetch or _fetch_url
-    post = post or _post_soap
-    control_url = find_avtransport_control_url(location, fetch=fetch)
-    body = (
-        f'<u:GetTransportInfo xmlns:u="{AVTRANSPORT_TYPE}">'
-        f'<InstanceID>{INSTANCE_ID}</InstanceID></u:GetTransportInfo>'
-    )
-    response = post(control_url, "GetTransportInfo", body, timeout=10.0)
-    try:
-        root = ET.fromstring(response)
-    except ET.ParseError:
-        return {}
-    found = {}
-    for element in root.iter():
-        tag = element.tag.rsplit("}", 1)[-1]
-        if tag.startswith("Current") and element.text:
-            found[tag] = element.text
-    return found
 
 
 def stop(location: str, fetch=None, post=None) -> None:

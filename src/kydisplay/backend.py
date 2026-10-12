@@ -717,19 +717,6 @@ class DisplayBackend(QObject):
 
     def shutdown(self):
         """Called as the application quits. A running cast is left running."""
-        # First, and guarded, because everything below it can fail and none
-        # of it matters as much: whatever was muted for a cast gets its
-        # sound back. Quitting mid-cast otherwise leaves the browser silent
-        # with the application that silenced it gone, and nothing on screen
-        # to explain it.
-        if self._muted_sinks:
-            try:
-                from .dlna import audio
-
-                audio.unmute(self._muted_sinks)
-            except Exception:
-                logger.exception("shutdown: could not unmute")
-            self._muted_sinks = []
         # Forgotten whatever else quitting does, including when a cast is
         # left running: the next start asks again either way.
         self._forget_shared_source()
@@ -952,39 +939,17 @@ class DisplayBackend(QObject):
     # not trigger the same response.
     PORT_UNREACHABLE_CODE = "716"
 
-    def _log_transport_info(self, location):
-        """Ask the renderer what it thinks happened, and write it down.
-
-        The code it returns for a refused action carries nothing: this
-        television has answered 501 while playing perfectly, 501 while
-        failing, and not answered at all — one code, three outcomes. Its
-        own transport status is a separate question it answers honestly,
-        and ERROR_OCCURRED against a plausible-looking stream is worth far
-        more than another 501."""
-        from .dlna import client
-
-        try:
-            info = client.transport_info(location)
-        except Exception as error:
-            logger.info("transport info unavailable: %s", str(error)[:120])
-            return
-        logger.warning("renderer says: %s", info or "(nothing)")
-
     @pyqtSlot(str, str, str, result=bool)
-    def dlnaCast(self, location, stream_url, title="", duration=None):
-        # The Qt-visible slot takes three arguments, as the signal that
-        # reaches it does; duration is for Python callers, which is every
-        # real cast. Defaulted so neither path has to know about the other.
+    def dlnaCast(self, location, stream_url, title=""):
         from .dlna import client
 
         try:
-            client.play(location, stream_url, title=title, duration=duration)
+            client.play(location, stream_url, title=title)
             return True
         except client.SoapFault as error:
             logger.exception("dlnaCast: failed (code=%s)", error.code)
             if error.code == self.PORT_UNREACHABLE_CODE:
                 self._set_current_zone_has_access(False)
-            self._log_transport_info(location)
             return False
         except Exception:
             # Not a SoapFault — a raw network failure (confirmed tonight:
@@ -993,7 +958,6 @@ class DisplayBackend(QObject):
             # bool, never let anything escape and skip whatever the
             # caller does after it — here, specifically, muting.
             logger.exception("dlnaCast: failed (non-SOAP error)")
-            self._log_transport_info(location)
             return False
 
     @pyqtSlot()
@@ -1037,14 +1001,13 @@ class DisplayBackend(QObject):
         logger.info("castCurrentStream: %s is playing in %s", source.bus_name, browser or "an unknown browser")
 
         try:
-            resolved = extractor.extract(source.url, browser=browser)
+            direct_url = extractor.extract(source.url, browser=browser)
         except extractor.ExtractionError:
             logger.exception("castCurrentStream: extraction failed for %s", source.url)
             return
-        logger.info("castCurrentStream: resolved %s -> %s (%ss)",
-                    source.url, resolved.url[:150], resolved.duration)
+        logger.info("castCurrentStream: resolved %s -> %s", source.url, direct_url[:150])
 
-        proxy.set_source(resolved.url)
+        proxy.set_source(direct_url)
 
         address = network.default_lan_interface_and_ip()
         if address is None:
@@ -1068,34 +1031,13 @@ class DisplayBackend(QObject):
             "lg" in d["name"].lower() or "webos" in d["name"].lower()
             for d in self.devices.as_dicts()
         )
-        hosts = [str(h) for h in ipaddress.ip_network(f"{lan_ip}/24", strict=False).hosts()]
         renderer = None
         if is_lg_target:
+            hosts = [str(h) for h in ipaddress.ip_network(f"{lan_ip}/24", strict=False).hosts()]
             renderer = self._dlna_discovery.find_lg_blind(hosts)
         if renderer is None:
             devices = self._dlna_discovery.devices(active_search_seconds=3)
             renderer = devices[0] if devices else None
-        if renderer is None and not is_lg_target:
-            # Last resort, and it earns its place: the Wi-Fi Display list
-            # is what decides whether the fast path above runs, and that
-            # list goes empty for reasons that have nothing to do with
-            # whether a renderer is reachable. When it does, the only
-            # thing left is a search that answers no announcement and
-            # asks every address directly.
-            #
-            # Which is worth doing, because the renderer is often simply
-            # there: with the display list empty and the generic search
-            # finding nothing, this television was answering happily on a
-            # port nothing had thought to ask — NO_MEDIA_PRESENT, status
-            # OK, ready to be cast to. Discovery had failed, not the
-            # television.
-            #
-            # Not run first, because it sweeps the subnet and the two
-            # cheaper answers are usually right. Not skipped, because
-            # "nothing announced itself" is not the same as "nothing is
-            # there".
-            logger.info("castCurrentStream: nothing announced itself; scanning directly")
-            renderer = self._dlna_discovery.find_lg_blind(hosts)
         if renderer is None:
             logger.warning("castCurrentStream: no DLNA renderer found")
             return
@@ -1121,45 +1063,10 @@ class DisplayBackend(QObject):
 
             self._muted_sinks = audio.mute_browser_audio()
 
-        succeeded = self.dlnaCast(renderer.location, stream_url, source.title,
-                                  duration=resolved.duration)
+        succeeded = self.dlnaCast(renderer.location, stream_url, source.title)
         if not succeeded:
             logger.warning("castCurrentStream: dlnaCast reported failure — "
                            "not necessarily final, see streamStarted")
-            # Muting happens on the click, before anything is known, so a
-            # cast that never starts leaves the browser silent with no way
-            # back: castActive stays false, so the stop button never
-            # appears, and stopCast would refuse anyway. Confirmed twice
-            # in one evening against a renderer that refused the file.
-            #
-            # Not undone immediately, because this renderer has returned a
-            # SOAP fault and then played anyway more than once — unmuting
-            # on the fault alone would restore the sound of a cast that is
-            # about to work. So the sound comes back only if nothing has
-            # started by the time the renderer has plainly had enough of a
-            # chance.
-            self._schedule(self.FAILED_CAST_GRACE_MS, self._release_failed_cast)
-
-    # How long after a refused cast to wait before deciding nothing is
-    # going to start. Generous on purpose: this renderer has answered a
-    # cast with a fault and then begun playing half a minute later, and
-    # cutting that short would restore the laptop's sound over a cast that
-    # is working.
-    FAILED_CAST_GRACE_MS = 45000
-
-    def _release_failed_cast(self):
-        """Give the browser its sound back when a cast never started.
-
-        Does nothing if one did start in the meantime, which is the whole
-        reason for waiting rather than acting on the fault itself."""
-        if self._cast_active or not self._muted_sinks:
-            return
-        logger.info("castCurrentStream: nothing started after the refusal; unmuting")
-        from .dlna import audio
-
-        audio.unmute(self._muted_sinks)
-        self._muted_sinks = []
-        self._active_renderer_location = None
 
     def _on_stream_started(self):
         """The proxy's own evidence the TV is actually pulling the stream —

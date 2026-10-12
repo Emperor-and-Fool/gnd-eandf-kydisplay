@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import http.server
 import logging
-import socket
 import subprocess
 import sys
 import threading
@@ -108,44 +107,6 @@ def set_source(url: str, url_path: str = "/stream.ts") -> None:
     _source_url_path = url_path
 
 
-# Every remux currently running, so that stopping the server can stop
-# them too.
-#
-# The handler's own finally already kills one when its request ends, and
-# that is enough while the application is running. It is not enough when
-# the application quits: the server's threads are daemon threads, which
-# the interpreter kills outright at exit without running their finally
-# blocks, so the ffmpeg a thread owned is simply let go. Observed
-# directly — one still resident, holding its memory, after the
-# application that started it had gone.
-_running: set[subprocess.Popen] = set()
-_running_lock = threading.Lock()
-
-
-def _remember(proc: subprocess.Popen) -> None:
-    with _running_lock:
-        _running.add(proc)
-
-
-def _forget(proc: subprocess.Popen) -> None:
-    with _running_lock:
-        _running.discard(proc)
-
-
-def _stop_all_remuxes() -> None:
-    with _running_lock:
-        procs, _running_copy = list(_running), None
-        _running.clear()
-    for proc in procs:
-        try:
-            proc.kill()
-            proc.wait(timeout=2)
-        except Exception:
-            logger.exception("proxy: could not stop ffmpeg pid=%s", proc.pid)
-    if procs:
-        logger.info("proxy: stopped %d remux process(es)", len(procs))
-
-
 def ffmpeg_command(url: str, kind: sourcelib.SourceKind) -> list[str]:
     """The remux command for one source. A plain function taking the kind
     rather than reading it, so what each kind is sent can be checked
@@ -187,88 +148,6 @@ def ffmpeg_command(url: str, kind: sourcelib.SourceKind) -> list[str]:
     return command
 
 
-# Headers a renderer uses to ask for part of something rather than all of
-# it. Logged whenever they appear, because what this TV actually asks for
-# is the only way to know what it would need to be given: it draws a
-# position bar from the duration in the DIDL-Lite but will not scrub, and
-# whether that is because it never asks, or asks in a way nothing here
-# answers, is not something to guess at.
-SEEK_HEADERS = ("Range", "TimeSeekRange.dlna.org", "PlaySpeed.dlna.org",
-                "getcontentFeatures.dlna.org", "transferMode.dlna.org")
-
-# What every answer about the stream says, beyond its type.
-#
-# The renderer asks for "Range: bytes=0-" and was being answered 200 with
-# no Content-Length, no Content-Range and no Accept-Ranges — an answer
-# that makes sense for a stream and none at all for the file it believes
-# it asked about. Measured: it hangs up one second later and then refuses
-# to play, which arrives as the useless 501.
-#
-# So the question is answered rather than ignored. Ranges are genuinely
-# not available: what is being served is remuxed as it goes, so there is
-# no byte offset into it that means anything and no total length to
-# report. Saying so plainly is the honest answer and the one that lets a
-# renderer stop waiting for a 206.
-#
-# transferMode is the DLNA way of saying the same thing in the renderer's
-# own vocabulary: this is streamed, not transferred. Connection: close
-# follows from it, since a stream with no length ends by the connection
-# ending.
-#
-# None of this touches DIDL-Lite or protocolInfo, which is deliberate:
-# all three failures tonight came from that field, and these are plain
-# HTTP response headers that leave it alone.
-STREAM_HEADERS = (
-    ("Accept-Ranges", "none"),
-    ("transferMode.dlna.org", "Streaming"),
-    ("Connection", "close"),
-)
-
-
-# How long a renderer may go without answering the kernel before its
-# connection is called dead: idle a minute, then six probes ten seconds
-# apart, so roughly two minutes of genuine silence.
-#
-# Keepalive rather than a socket timeout, and the difference matters.
-# Serving a stream spends most of its time blocked in write, because a
-# television that has buffered ahead stops reading until it needs more —
-# and one paused by the person watching stops reading indefinitely. A
-# timeout cannot tell that apart from an absent television and would end
-# a perfectly good cast the moment somebody paused it. Keepalive asks:
-# a set that is merely not reading still answers, a set that has gone
-# does not, and only then does the write fail.
-#
-# Which is what was missing. A renderer that disappears without closing
-# cleanly leaves the write blocked on a half-open socket forever, so the
-# loop never ends, so the finally that kills ffmpeg never runs. Observed
-# directly: a thirty-minute-old ffmpeg still resident, holding its memory,
-# for a cast whose connection was long gone — one leaked per abandoned
-# cast, in an application meant to sit in a tray for days.
-KEEPALIVE_IDLE = 60
-KEEPALIVE_INTERVAL = 10
-KEEPALIVE_PROBES = 6
-
-
-def _enable_keepalive(sock) -> None:
-    """Ask the kernel to notice a renderer that has gone away. Best
-    effort: the per-option constants are Linux names, and a platform
-    without them simply keeps the behaviour it had."""
-    try:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-    except OSError:
-        return
-    for option, value in (("TCP_KEEPIDLE", KEEPALIVE_IDLE),
-                          ("TCP_KEEPINTVL", KEEPALIVE_INTERVAL),
-                          ("TCP_KEEPCNT", KEEPALIVE_PROBES)):
-        number = getattr(socket, option, None)
-        if number is None:
-            continue
-        try:
-            sock.setsockopt(socket.IPPROTO_TCP, number, value)
-        except OSError:
-            logger.debug("proxy: could not set %s", option)
-
-
 class _TrialHandler(http.server.BaseHTTPRequestHandler):
     """Serves the one registered trial file at its one registered path;
     404 for everything else, same as before this existed."""
@@ -281,15 +160,12 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
         if _source_url is not None and self.path == _source_url_path:
-            self._log_seek_headers("HEAD")
             # No ffmpeg spawn for HEAD — a remux has no fixed length to
             # report in the first place, and spawning one just to answer
             # a presence check was the exact bug the trial file's own
             # HEAD handler was added to fix, applied here too.
             self.send_response(200)
             self.send_header("Content-Type", "video/vnd.dlna.mpeg-tts")
-            for name, value in STREAM_HEADERS:
-                self.send_header(name, value)
             self.end_headers()
             return
         self.send_response(404)
@@ -321,38 +197,11 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(404)
         self.end_headers()
 
-    # BaseHTTPRequestHandler answers HTTP/1.0 unless told otherwise, and
-    # nothing here had ever told it otherwise — so a renderer asking in
-    # HTTP/1.1 was being answered in 1.0. DLNA's own transport rules
-    # require 1.1, and a television is entitled to act on that.
-    #
-    # Safe only because Connection: close is sent with it: 1.1 without a
-    # Content-Length needs the body delimited somehow, and closing is the
-    # delimiter. Declaring 1.1 while keeping the connection alive and
-    # giving no length would leave a renderer waiting for a body that
-    # never formally ends.
-    protocol_version = "HTTP/1.1"
-
-    def setup(self):
-        super().setup()
-        _enable_keepalive(self.connection)
-
-    def _log_seek_headers(self, method: str):
-        asked = {name: self.headers[name] for name in SEEK_HEADERS if self.headers.get(name)}
-        if asked:
-            logger.info("proxy: %s %s asked for %s", method, self.path, asked)
-        else:
-            logger.info("proxy: %s %s sent no seek headers (all of: %s)",
-                        method, self.path, ", ".join(SEEK_HEADERS))
-
     def _serve_source(self):
-        self._log_seek_headers("GET")
         kind = sourcelib.classify(_source_url)
         logger.info("proxy: serving source kind=%s url=%s", kind, _source_url)
         self.send_response(200)
         self.send_header("Content-Type", "video/vnd.dlna.mpeg-tts")
-        for name, value in STREAM_HEADERS:
-            self.send_header(name, value)
         self.end_headers()
         if _stream_started_trigger is not None:
             _stream_started_trigger()
@@ -360,24 +209,15 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
             ffmpeg_command(_source_url, kind),
             stdout=subprocess.PIPE, stderr=sys.stderr,
         )
-        _remember(proc)
         try:
             while True:
                 chunk = proc.stdout.read(65536)
                 if not chunk:
                     break
                 self.wfile.write(chunk)
-        except OSError as error:
-            # Broader than the BrokenPipeError and ConnectionResetError a
-            # cleanly-closed renderer raises, because the one this needed
-            # to catch is neither: a set that vanished without closing is
-            # noticed by the kernel's keepalive probes and surfaces as
-            # ETIMEDOUT. Caught here only so the finally below runs; what
-            # went wrong is the same either way, a renderer that stopped
-            # listening.
-            logger.info("proxy: renderer stopped listening (%s)", error)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
         finally:
-            _forget(proc)
             proc.kill()
             proc.wait()
         # A direct source or a finite HLS VOD playlist ending is ffmpeg
@@ -417,15 +257,7 @@ def start() -> bool:
 
 
 def stop() -> None:
-    """Stop listening, and stop what is still being served.
-
-    Both halves matter. Closing the socket ends nothing already in
-    flight, and the threads serving those requests are daemon threads
-    that the interpreter kills at exit without running their cleanup — so
-    without this, quitting mid-cast leaves an ffmpeg behind with no
-    parent and no reason to stop."""
     global _server, _thread
-    _stop_all_remuxes()
     if _server is not None:
         _server.shutdown()
         _server.server_close()
