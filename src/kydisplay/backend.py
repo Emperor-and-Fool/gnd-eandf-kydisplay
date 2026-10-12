@@ -717,6 +717,19 @@ class DisplayBackend(QObject):
 
     def shutdown(self):
         """Called as the application quits. A running cast is left running."""
+        # First, and guarded, because everything below it can fail and none
+        # of it matters as much: whatever was muted for a cast gets its
+        # sound back. Quitting mid-cast otherwise leaves the browser silent
+        # with the application that silenced it gone, and nothing on screen
+        # to explain it.
+        if self._muted_sinks:
+            try:
+                from .dlna import audio
+
+                audio.unmute(self._muted_sinks)
+            except Exception:
+                logger.exception("shutdown: could not unmute")
+            self._muted_sinks = []
         # Forgotten whatever else quitting does, including when a cast is
         # left running: the next start asks again either way.
         self._forget_shared_source()
@@ -1072,6 +1085,40 @@ class DisplayBackend(QObject):
         if not succeeded:
             logger.warning("castCurrentStream: dlnaCast reported failure — "
                            "not necessarily final, see streamStarted")
+            # Muting happens on the click, before anything is known, so a
+            # cast that never starts leaves the browser silent with no way
+            # back: castActive stays false, so the stop button never
+            # appears, and stopCast would refuse anyway. Confirmed twice
+            # in one evening against a renderer that refused the file.
+            #
+            # Not undone immediately, because this renderer has returned a
+            # SOAP fault and then played anyway more than once — unmuting
+            # on the fault alone would restore the sound of a cast that is
+            # about to work. So the sound comes back only if nothing has
+            # started by the time the renderer has plainly had enough of a
+            # chance.
+            self._schedule(self.FAILED_CAST_GRACE_MS, self._release_failed_cast)
+
+    # How long after a refused cast to wait before deciding nothing is
+    # going to start. Generous on purpose: this renderer has answered a
+    # cast with a fault and then begun playing half a minute later, and
+    # cutting that short would restore the laptop's sound over a cast that
+    # is working.
+    FAILED_CAST_GRACE_MS = 45000
+
+    def _release_failed_cast(self):
+        """Give the browser its sound back when a cast never started.
+
+        Does nothing if one did start in the meantime, which is the whole
+        reason for waiting rather than acting on the fault itself."""
+        if self._cast_active or not self._muted_sinks:
+            return
+        logger.info("castCurrentStream: nothing started after the refusal; unmuting")
+        from .dlna import audio
+
+        audio.unmute(self._muted_sinks)
+        self._muted_sinks = []
+        self._active_renderer_location = None
 
     def _on_stream_started(self):
         """The proxy's own evidence the TV is actually pulling the stream —
