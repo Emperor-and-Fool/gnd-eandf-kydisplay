@@ -1044,13 +1044,34 @@ class DisplayBackend(QObject):
             "lg" in d["name"].lower() or "webos" in d["name"].lower()
             for d in self.devices.as_dicts()
         )
+        hosts = [str(h) for h in ipaddress.ip_network(f"{lan_ip}/24", strict=False).hosts()]
         renderer = None
         if is_lg_target:
-            hosts = [str(h) for h in ipaddress.ip_network(f"{lan_ip}/24", strict=False).hosts()]
             renderer = self._dlna_discovery.find_lg_blind(hosts)
         if renderer is None:
             devices = self._dlna_discovery.devices(active_search_seconds=3)
             renderer = devices[0] if devices else None
+        if renderer is None and not is_lg_target:
+            # Last resort, and it earns its place: the Wi-Fi Display list
+            # is what decides whether the fast path above runs, and that
+            # list goes empty for reasons that have nothing to do with
+            # whether a renderer is reachable. When it does, the only
+            # thing left is a search that answers no announcement and
+            # asks every address directly.
+            #
+            # Which is worth doing, because the renderer is often simply
+            # there: with the display list empty and the generic search
+            # finding nothing, this television was answering happily on a
+            # port nothing had thought to ask — NO_MEDIA_PRESENT, status
+            # OK, ready to be cast to. Discovery had failed, not the
+            # television.
+            #
+            # Not run first, because it sweeps the subnet and the two
+            # cheaper answers are usually right. Not skipped, because
+            # "nothing announced itself" is not the same as "nothing is
+            # there".
+            logger.info("castCurrentStream: nothing announced itself; scanning directly")
+            renderer = self._dlna_discovery.find_lg_blind(hosts)
         if renderer is None:
             logger.warning("castCurrentStream: no DLNA renderer found")
             return
