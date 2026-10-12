@@ -35,11 +35,29 @@ end)."""
 
 from __future__ import annotations
 
+import urllib.parse
 import urllib.request
 from enum import Enum
 
 HLS_SIGNATURE = "#EXTM3U"
 VOD_END_MARKER = "#EXT-X-ENDLIST"
+
+# A playlist that lists other playlists rather than segments. Its presence
+# is why the end marker alone is not enough to answer VOD-or-live: that
+# marker lives in the media playlist, and a master playlist never carries
+# one no matter what it points at. Checking only for the marker therefore
+# called every master playlist live — including a plainly finished Rumble
+# recording, observed directly.
+MASTER_MARKER = "#EXT-X-STREAM-INF"
+
+# Sent on every request here, because a CDN that will not serve
+# "Python-urllib/3.x" is common enough to have bitten this directly:
+# Rumble's playlist refused the default agent, _fetch_text returned None,
+# and a real HLS playlist was classified DIRECT — silently, since a
+# failed fetch and a genuinely-not-HLS source were indistinguishable.
+# The same string proxy.py sends ffmpeg, for the same reason.
+USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36")
 
 
 class SourceKind(Enum):
@@ -49,24 +67,56 @@ class SourceKind(Enum):
 
 
 def _fetch_text(url: str, max_bytes: int | None = None, timeout: float = 5.0) -> str | None:
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
             data = resp.read(max_bytes) if max_bytes else resp.read()
             return data.decode(errors="replace")
     except Exception:
         return None
 
 
+def _first_variant(playlist: str, base_url: str) -> str | None:
+    """The URL of the first media playlist a master playlist lists, made
+    absolute. A variant's URL is the first non-comment line after its
+    ``#EXT-X-STREAM-INF`` tag, and may be written relative to the master."""
+    lines = playlist.splitlines()
+    for index, line in enumerate(lines):
+        if not line.startswith(MASTER_MARKER):
+            continue
+        for candidate in lines[index + 1:]:
+            candidate = candidate.strip()
+            if candidate and not candidate.startswith("#"):
+                return urllib.parse.urljoin(base_url, candidate)
+    return None
+
+
 def classify(url: str, fetch=None) -> SourceKind:
     """Which :class:`SourceKind` ``url`` actually is, found out the only
     way that is reliable: asking it, not guessing from the URL's own
     spelling — a playlist does not have to end in ``.m3u8``, and
-    something that does is not guaranteed to be one."""
+    something that does is not guaranteed to be one.
+
+    A master playlist is followed one step down to its first variant
+    before the VOD-or-live question is asked, since only the media
+    playlist it points at can answer that one."""
     fetch = fetch or _fetch_text
     head = fetch(url, 512)
     if head is None or not head.lstrip().startswith(HLS_SIGNATURE):
         return SourceKind.DIRECT
+
     playlist = fetch(url, None)
-    if playlist is not None and VOD_END_MARKER in playlist:
-        return SourceKind.HLS_VOD
-    return SourceKind.HLS_LIVE
+    if playlist is None:
+        # Known to be HLS from the first bytes, but unreadable in full.
+        # Live is the safer of the two to assume: it is the one the proxy
+        # treats as "must not end on its own", so a wrong guess here
+        # produces a stray log line rather than a cast that quietly stops.
+        return SourceKind.HLS_LIVE
+
+    if MASTER_MARKER in playlist:
+        variant = _first_variant(playlist, url)
+        media = fetch(variant, None) if variant else None
+        if media is not None:
+            playlist = media
+
+    return SourceKind.HLS_VOD if VOD_END_MARKER in playlist else SourceKind.HLS_LIVE

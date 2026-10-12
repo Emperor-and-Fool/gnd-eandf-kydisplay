@@ -166,6 +166,27 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
             _stream_started_trigger()
         proc = subprocess.Popen(
             ["ffmpeg", "-nostdin", "-loglevel", "warning",
+             # ffmpeg's HLS demuxer decides whether a segment may be opened
+             # by looking at the extension in its URL, and refuses anything
+             # not on a built-in list. Rumble serves its segments from a
+             # .tar with the real name in the query string
+             # (".../x.rec.tar?r_file=media-0.ts"), so the check sees "tar",
+             # rejects every variant, and ffmpeg exits having produced no
+             # stream at all.
+             #
+             # This is the option that actually turns the check off, which
+             # is worth stating because the obvious candidates do not:
+             # "-allowed_extensions ALL" and "-allowed_segment_extensions
+             # ALL" were both tried against this exact stream and both
+             # still produced nothing — ALL is not a magic value in this
+             # ffmpeg, it is read as a literal extension list. Only
+             # extension_picky, which gates the whole check, worked.
+             #
+             # Turning it off costs nothing here: the URL being opened is
+             # one this app resolved itself a moment ago, not one a
+             # stranger supplied, so the extension was never carrying any
+             # safety property worth keeping.
+             "-extension_picky", "0",
              "-user_agent", USER_AGENT, "-i", _source_url,
              "-c", "copy", "-bsf:v", "h264_mp4toannexb",
              "-mpegts_flags", "system_b", "-f", "mpegts", "pipe:1"],
