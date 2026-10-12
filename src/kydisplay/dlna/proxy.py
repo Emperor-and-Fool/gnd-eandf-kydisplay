@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import http.server
 import logging
+import socket
 import subprocess
 import sys
 import threading
@@ -158,6 +159,50 @@ SEEK_HEADERS = ("Range", "TimeSeekRange.dlna.org", "PlaySpeed.dlna.org",
                 "getcontentFeatures.dlna.org", "transferMode.dlna.org")
 
 
+# How long a renderer may go without answering the kernel before its
+# connection is called dead: idle a minute, then six probes ten seconds
+# apart, so roughly two minutes of genuine silence.
+#
+# Keepalive rather than a socket timeout, and the difference matters.
+# Serving a stream spends most of its time blocked in write, because a
+# television that has buffered ahead stops reading until it needs more —
+# and one paused by the person watching stops reading indefinitely. A
+# timeout cannot tell that apart from an absent television and would end
+# a perfectly good cast the moment somebody paused it. Keepalive asks:
+# a set that is merely not reading still answers, a set that has gone
+# does not, and only then does the write fail.
+#
+# Which is what was missing. A renderer that disappears without closing
+# cleanly leaves the write blocked on a half-open socket forever, so the
+# loop never ends, so the finally that kills ffmpeg never runs. Observed
+# directly: a thirty-minute-old ffmpeg still resident, holding its memory,
+# for a cast whose connection was long gone — one leaked per abandoned
+# cast, in an application meant to sit in a tray for days.
+KEEPALIVE_IDLE = 60
+KEEPALIVE_INTERVAL = 10
+KEEPALIVE_PROBES = 6
+
+
+def _enable_keepalive(sock) -> None:
+    """Ask the kernel to notice a renderer that has gone away. Best
+    effort: the per-option constants are Linux names, and a platform
+    without them simply keeps the behaviour it had."""
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    except OSError:
+        return
+    for option, value in (("TCP_KEEPIDLE", KEEPALIVE_IDLE),
+                          ("TCP_KEEPINTVL", KEEPALIVE_INTERVAL),
+                          ("TCP_KEEPCNT", KEEPALIVE_PROBES)):
+        number = getattr(socket, option, None)
+        if number is None:
+            continue
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, number, value)
+        except OSError:
+            logger.debug("proxy: could not set %s", option)
+
+
 class _TrialHandler(http.server.BaseHTTPRequestHandler):
     """Serves the one registered trial file at its one registered path;
     404 for everything else, same as before this existed."""
@@ -208,6 +253,10 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(404)
         self.end_headers()
 
+    def setup(self):
+        super().setup()
+        _enable_keepalive(self.connection)
+
     def _log_seek_headers(self, method: str):
         asked = {name: self.headers[name] for name in SEEK_HEADERS if self.headers.get(name)}
         if asked:
@@ -235,8 +284,15 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
                 if not chunk:
                     break
                 self.wfile.write(chunk)
-        except (BrokenPipeError, ConnectionResetError):
-            pass
+        except OSError as error:
+            # Broader than the BrokenPipeError and ConnectionResetError a
+            # cleanly-closed renderer raises, because the one this needed
+            # to catch is neither: a set that vanished without closing is
+            # noticed by the kernel's keepalive probes and surfaces as
+            # ETIMEDOUT. Caught here only so the finally below runs; what
+            # went wrong is the same either way, a renderer that stopped
+            # listening.
+            logger.info("proxy: renderer stopped listening (%s)", error)
         finally:
             proc.kill()
             proc.wait()
