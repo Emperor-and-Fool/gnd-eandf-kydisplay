@@ -41,6 +41,7 @@ a person's browser once for a reason and reading it constantly for none.
 from __future__ import annotations
 
 import urllib.parse
+from dataclasses import dataclass
 
 import yt_dlp
 
@@ -117,6 +118,23 @@ class ExtractionError(RuntimeError):
     """A page yt-dlp could not resolve to a direct stream."""
 
 
+@dataclass(frozen=True)
+class Stream:
+    """What a page resolved to: the URL to fetch, and how long it runs.
+
+    ``duration`` is in seconds, or ``None`` when there is no such answer —
+    a live broadcast has no length, and not every site reports one. It is
+    carried here rather than discarded because a renderer cannot work it
+    out for itself: once a source is remuxed to MPEG-TS, nothing in the
+    stream says how long it is, so a television that is not told shows no
+    timeline and cannot be scrubbed. Both resolvers already know the
+    number; the only reason it used to be lost was that this returned a
+    bare string."""
+
+    url: str
+    duration: int | None = None
+
+
 def _host_matches(host: str, suffixes: tuple[str, ...]) -> bool:
     return any(host == suffix or host.endswith("." + suffix) for suffix in suffixes)
 
@@ -147,8 +165,8 @@ def options_for(page_url: str, browser: str | None = None) -> dict:
     return options
 
 
-def extract(page_url: str, browser: str | None = None) -> str:
-    """The direct URL a renderer can fetch for what is playing at
+def extract(page_url: str, browser: str | None = None) -> Stream:
+    """The :class:`Stream` a renderer can fetch for what is playing at
     ``page_url``. Raises :class:`ExtractionError` on anything that could
     not be resolved, such as a site yt-dlp does not support or one that
     refused the request.
@@ -163,7 +181,8 @@ def extract(page_url: str, browser: str | None = None) -> str:
     today means Rumble and its Cloudflare challenge."""
     if extractor_rumble.handles(page_url):
         try:
-            return extractor_rumble.resolve(page_url)
+            url, duration = extractor_rumble.resolve(page_url)
+            return Stream(url=url, duration=duration)
         except extractor_rumble.RumbleError as error:
             raise ExtractionError(str(error)) from error
         except OSError as error:
@@ -181,4 +200,8 @@ def extract(page_url: str, browser: str | None = None) -> str:
     url = info.get("url") if info else None
     if not url:
         raise ExtractionError(f"yt-dlp found no playable stream at {page_url}")
-    return url
+    # Absent on a live broadcast, and on any site that does not report one.
+    # Rounded because DIDL-Lite counts whole seconds and yt-dlp may answer
+    # with a float.
+    duration = info.get("duration")
+    return Stream(url=url, duration=int(duration) if duration else None)

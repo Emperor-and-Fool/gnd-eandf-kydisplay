@@ -940,11 +940,14 @@ class DisplayBackend(QObject):
     PORT_UNREACHABLE_CODE = "716"
 
     @pyqtSlot(str, str, str, result=bool)
-    def dlnaCast(self, location, stream_url, title=""):
+    def dlnaCast(self, location, stream_url, title="", duration=None):
+        # The Qt-visible slot takes three arguments, as the signal that
+        # reaches it does; duration is for Python callers, which is every
+        # real cast. Defaulted so neither path has to know about the other.
         from .dlna import client
 
         try:
-            client.play(location, stream_url, title=title)
+            client.play(location, stream_url, title=title, duration=duration)
             return True
         except client.SoapFault as error:
             logger.exception("dlnaCast: failed (code=%s)", error.code)
@@ -1001,13 +1004,14 @@ class DisplayBackend(QObject):
         logger.info("castCurrentStream: %s is playing in %s", source.bus_name, browser or "an unknown browser")
 
         try:
-            direct_url = extractor.extract(source.url, browser=browser)
+            resolved = extractor.extract(source.url, browser=browser)
         except extractor.ExtractionError:
             logger.exception("castCurrentStream: extraction failed for %s", source.url)
             return
-        logger.info("castCurrentStream: resolved %s -> %s", source.url, direct_url[:150])
+        logger.info("castCurrentStream: resolved %s -> %s (%ss)",
+                    source.url, resolved.url[:150], resolved.duration)
 
-        proxy.set_source(direct_url)
+        proxy.set_source(resolved.url)
 
         address = network.default_lan_interface_and_ip()
         if address is None:
@@ -1063,7 +1067,8 @@ class DisplayBackend(QObject):
 
             self._muted_sinks = audio.mute_browser_audio()
 
-        succeeded = self.dlnaCast(renderer.location, stream_url, source.title)
+        succeeded = self.dlnaCast(renderer.location, stream_url, source.title,
+                                  duration=resolved.duration)
         if not succeeded:
             logger.warning("castCurrentStream: dlnaCast reported failure — "
                            "not necessarily final, see streamStarted")

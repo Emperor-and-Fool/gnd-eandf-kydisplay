@@ -141,7 +141,7 @@ def _describe_fault(action: str, status: int, fault_body: str) -> tuple[str, str
     return f"{action} failed: HTTP {status}", None
 
 
-def _metadata(title: str, uri: str) -> str:
+def _metadata(title: str, uri: str, duration: int | None = None) -> str:
     writer = GUPnPAV.DIDLLiteWriter.new(None)
     item = writer.add_item()
     item.set_id("0")
@@ -153,6 +153,17 @@ def _metadata(title: str, uri: str) -> str:
     resource = item.add_resource()
     resource.set_uri(uri)
     resource.set_protocol_info(GUPnPAV.ProtocolInfo.new_from_string("http-get:*:*:*"))
+    # How long the thing runs, which is the only way a renderer can know:
+    # the stream it is sent is MPEG-TS, which carries no length of its own,
+    # so a television told nothing here has nothing to draw a position bar
+    # from. Written as a duration attribute on the resource — not into
+    # protocolInfo, which stays the bare wildcard it has to be: narrowing
+    # that field broke casting outright once and was reverted.
+    #
+    # Omitted rather than guessed when unknown. A live broadcast has no
+    # length, and claiming one would describe the stream wrongly.
+    if duration:
+        resource.set_duration(int(duration))
 
     return writer.get_string()
 
@@ -180,8 +191,8 @@ def find_avtransport_control_url(location: str, fetch=None) -> str:
     raise NoAvTransport(f"{location} has no AVTransport service")
 
 
-def play(location: str, stream_url: str, title: str = "", mac: str | None = None,
-         fetch=None, post=None) -> None:
+def play(location: str, stream_url: str, title: str = "", duration: int | None = None,
+         mac: str | None = None, fetch=None, post=None) -> None:
     """Push ``stream_url`` to the renderer at ``location`` and start it.
 
     ``location`` is a :class:`~kydisplay.dlna.discovery.DmrDevice`'s
@@ -206,7 +217,7 @@ def play(location: str, stream_url: str, title: str = "", mac: str | None = None
         f'<u:SetAVTransportURI xmlns:u="{AVTRANSPORT_TYPE}">'
         f'<InstanceID>{INSTANCE_ID}</InstanceID>'
         f'<CurrentURI>{saxutils.escape(stream_url)}</CurrentURI>'
-        f'<CurrentURIMetaData>{saxutils.escape(_metadata(title, stream_url))}</CurrentURIMetaData>'
+        f'<CurrentURIMetaData>{saxutils.escape(_metadata(title, stream_url, duration))}</CurrentURIMetaData>'
         f'</u:SetAVTransportURI>'
     )
     post(control_url, "SetAVTransportURI", set_uri_body)

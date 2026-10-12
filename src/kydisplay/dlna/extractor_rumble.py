@@ -98,13 +98,18 @@ def _fetch(url: str, fetch=None) -> bytes:
         return response.read()
 
 
-def embed_url(page_url: str, fetch=None) -> str:
-    """The embed URL for a watch page, via the oEmbed API.
+def embed_url(page_url: str, fetch=None) -> tuple[str, int | None]:
+    """The embed URL for a watch page and its duration in seconds, via the
+    oEmbed API.
 
     The embed id is not derivable from the watch URL: this page's watch id
     is ``v7gjc60`` and its embed id is ``v7ecz8i``. Guessing one from the
     other returns 410, which is how that was established rather than
-    assumed."""
+    assumed.
+
+    The duration comes back in the same answer, so it costs nothing to
+    keep and is the only place this route can learn it — the embed page's
+    media table gives URLs, not lengths."""
     query = urllib.parse.urlencode({"url": page_url})
     raw = _fetch(f"{OEMBED_API}?{query}", fetch=fetch)
     try:
@@ -114,7 +119,8 @@ def embed_url(page_url: str, fetch=None) -> str:
     match = _EMBED_SRC.search(payload.get("html") or "")
     if not match:
         raise RumbleError(f"Rumble's oEmbed API named no embed URL for {page_url}")
-    return match.group(1)
+    duration = payload.get("duration")
+    return match.group(1), (int(duration) if duration else None)
 
 
 def _json_object_at(text: str, key: str) -> dict:
@@ -193,12 +199,13 @@ def choose_stream(table: dict) -> str:
     )
 
 
-def resolve(page_url: str, fetch=None) -> str:
-    """The direct stream URL for a Rumble watch page. Raises
-    :class:`RumbleError` if any step of the unchallenged route fails."""
-    embed = embed_url(page_url, fetch=fetch)
-    logger.info("rumble: %s -> embed %s", page_url, embed)
+def resolve(page_url: str, fetch=None) -> tuple[str, int | None]:
+    """The direct stream URL for a Rumble watch page, and its duration in
+    seconds. Raises :class:`RumbleError` if any step of the unchallenged
+    route fails."""
+    embed, duration = embed_url(page_url, fetch=fetch)
+    logger.info("rumble: %s -> embed %s (%ss)", page_url, embed, duration)
     table = media_table(embed, fetch=fetch)
     stream = choose_stream(table)
     logger.info("rumble: embed %s -> stream %s", embed, stream)
-    return stream
+    return stream, duration
