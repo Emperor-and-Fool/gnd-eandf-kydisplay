@@ -196,6 +196,34 @@ def ffmpeg_command(url: str, kind: sourcelib.SourceKind) -> list[str]:
 SEEK_HEADERS = ("Range", "TimeSeekRange.dlna.org", "PlaySpeed.dlna.org",
                 "getcontentFeatures.dlna.org", "transferMode.dlna.org")
 
+# What every answer about the stream says, beyond its type.
+#
+# The renderer asks for "Range: bytes=0-" and was being answered 200 with
+# no Content-Length, no Content-Range and no Accept-Ranges — an answer
+# that makes sense for a stream and none at all for the file it believes
+# it asked about. Measured: it hangs up one second later and then refuses
+# to play, which arrives as the useless 501.
+#
+# So the question is answered rather than ignored. Ranges are genuinely
+# not available: what is being served is remuxed as it goes, so there is
+# no byte offset into it that means anything and no total length to
+# report. Saying so plainly is the honest answer and the one that lets a
+# renderer stop waiting for a 206.
+#
+# transferMode is the DLNA way of saying the same thing in the renderer's
+# own vocabulary: this is streamed, not transferred. Connection: close
+# follows from it, since a stream with no length ends by the connection
+# ending.
+#
+# None of this touches DIDL-Lite or protocolInfo, which is deliberate:
+# all three failures tonight came from that field, and these are plain
+# HTTP response headers that leave it alone.
+STREAM_HEADERS = (
+    ("Accept-Ranges", "none"),
+    ("transferMode.dlna.org", "Streaming"),
+    ("Connection", "close"),
+)
+
 
 # How long a renderer may go without answering the kernel before its
 # connection is called dead: idle a minute, then six probes ten seconds
@@ -260,6 +288,8 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
             # HEAD handler was added to fix, applied here too.
             self.send_response(200)
             self.send_header("Content-Type", "video/vnd.dlna.mpeg-tts")
+            for name, value in STREAM_HEADERS:
+                self.send_header(name, value)
             self.end_headers()
             return
         self.send_response(404)
@@ -291,6 +321,18 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(404)
         self.end_headers()
 
+    # BaseHTTPRequestHandler answers HTTP/1.0 unless told otherwise, and
+    # nothing here had ever told it otherwise — so a renderer asking in
+    # HTTP/1.1 was being answered in 1.0. DLNA's own transport rules
+    # require 1.1, and a television is entitled to act on that.
+    #
+    # Safe only because Connection: close is sent with it: 1.1 without a
+    # Content-Length needs the body delimited somehow, and closing is the
+    # delimiter. Declaring 1.1 while keeping the connection alive and
+    # giving no length would leave a renderer waiting for a body that
+    # never formally ends.
+    protocol_version = "HTTP/1.1"
+
     def setup(self):
         super().setup()
         _enable_keepalive(self.connection)
@@ -309,6 +351,8 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
         logger.info("proxy: serving source kind=%s url=%s", kind, _source_url)
         self.send_response(200)
         self.send_header("Content-Type", "video/vnd.dlna.mpeg-tts")
+        for name, value in STREAM_HEADERS:
+            self.send_header(name, value)
         self.end_headers()
         if _stream_started_trigger is not None:
             _stream_started_trigger()
