@@ -56,12 +56,38 @@ def extract(page_url: str) -> str:
     """The direct URL a renderer can fetch for what is playing at
     ``page_url``. Raises :class:`ExtractionError` on anything yt-dlp itself
     could not resolve, such as a site it does not support or one that
-    refused the request."""
+    refused the request.
+
+    YouTube specifically needs two more things, confirmed directly
+    tonight: the browser's own cookies (``cookiesfrombrowser``, without
+    which YouTube's bot-check refuses the request outright), and a JS
+    runtime plus its remote challenge-solver component (``js_runtimes``,
+    ``remote_components``), without which YouTube's own "n challenge"
+    blocks extraction even past the bot-check.
+
+    Rumble needs something else again, confirmed directly tonight:
+    its very first page fetch returns a plain 403 regardless of headers
+    or cookies — a TLS/browser-fingerprint check, not a header check,
+    which only ``impersonate`` (via ``curl_cffi``) can pass, since
+    plain ``urllib``/``requests`` cannot fake a real browser's TLS
+    handshake. Requires ``curl_cffi`` to actually be installed; this
+    project now depends on it for that reason.
+
+    None of this is needed by every site extractor.py was written for
+    — Odysee needed neither YouTube's nor Rumble's workaround — but all
+    of it is harmless to pass unconditionally; a site that does not
+    need an option ignores it."""
+    from yt_dlp.networking.impersonate import ImpersonateTarget
+
     options = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
         "format": FORMAT,
+        "cookiesfrombrowser": ("firefox", None, None, None),
+        "js_runtimes": {"node": {}},
+        "remote_components": ["ejs:github"],
+        "impersonate": ImpersonateTarget.from_str("chrome"),
     }
     try:
         with yt_dlp.YoutubeDL(options) as ydl:
