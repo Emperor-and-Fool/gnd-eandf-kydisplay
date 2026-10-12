@@ -22,7 +22,9 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+import signal
 import subprocess
+import time
 
 from .models import DisplayDevice
 
@@ -137,10 +139,80 @@ class GnomeNetworkDisplaysService:
         logger.info("running: NameHasOwner(%s) -> %s", SERVICE, result)
         return result
 
+    def _owner_pid(self) -> int | None:
+        """Which process currently holds the engine's bus name."""
+        import dbus
+
+        try:
+            proxy = self.bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus")
+            interface = dbus.Interface(proxy, "org.freedesktop.DBus")
+            return int(interface.GetConnectionUnixProcessID(SERVICE))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _is_orphan(pid: int) -> bool:
+        """Whether a process has outlived whatever started it. Reparenting
+        to init is what being orphaned looks like from outside."""
+        try:
+            with open(f"/proc/{pid}/status") as handle:
+                for line in handle:
+                    if line.startswith("PPid:"):
+                        return int(line.split()[1]) <= 1
+        except (OSError, ValueError):
+            return False
+        return False
+
+    def _stranded_daemon(self) -> int | None:
+        """An engine left over from a previous run that is no use to this
+        one, or ``None`` if what is running is worth keeping.
+
+        Both halves have to be true. Orphaned, because a daemon this run
+        started is ours and fine. And finding nothing, because an orphan
+        that can still see receivers is doing its job — that is the engine
+        deliberately left alive so a cast survives the window closing, and
+        killing it would end somebody's cast.
+
+        An orphan that sees nothing is the case worth acting on, and it is
+        not hypothetical: an application that crashes never runs its
+        shutdown, so the engine it started keeps the bus name. The next
+        launch then finds the name owned, attaches to that engine rather
+        than starting one, and inherits its blindness — so the window comes
+        up healthy, lists no receivers, and restarting it changes nothing,
+        because the restart attaches to the same dead engine again."""
+        pid = self._owner_pid()
+        if pid is None or not self._is_orphan(pid):
+            return None
+        try:
+            if self.displays():
+                return None
+        except Exception:
+            # Cannot even be asked, which is its own kind of no use.
+            pass
+        return pid
+
     def ensure_running(self):
         if self.running():
-            logger.info("ensure_running: already running, daemon not (re)started")
-            return
+            stranded = self._stranded_daemon() if self._process is None else None
+            if stranded is None:
+                logger.info("ensure_running: already running, daemon not (re)started")
+                return
+            logger.warning("ensure_running: engine pid=%s is orphaned and sees nothing; "
+                           "replacing it", stranded)
+            try:
+                os.kill(stranded, signal.SIGTERM)
+            except OSError:
+                logger.exception("ensure_running: could not stop pid=%s", stranded)
+                return
+            # Give it a moment to drop the bus name, or the start below
+            # races it and the new engine finds the name taken.
+            for _ in range(20):
+                time.sleep(0.1)
+                if not self.running():
+                    break
+            else:
+                logger.warning("ensure_running: pid=%s still holds the bus name", stranded)
+                return
         if not self.daemon_path:
             logger.error("ensure_running: no daemon_path found, cannot start")
             raise RuntimeError("Network display backend is not installed")

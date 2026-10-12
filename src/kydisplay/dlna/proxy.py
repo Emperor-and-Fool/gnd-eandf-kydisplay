@@ -107,6 +107,44 @@ def set_source(url: str, url_path: str = "/stream.ts") -> None:
     _source_url_path = url_path
 
 
+# Every remux currently running, so that stopping the server can stop
+# them too.
+#
+# The handler's own finally already kills one when its request ends, and
+# that is enough while the application is running. It is not enough when
+# the application quits: the server's threads are daemon threads, which
+# the interpreter kills outright at exit without running their finally
+# blocks, so the ffmpeg a thread owned is simply let go. Observed
+# directly — one still resident, holding its memory, after the
+# application that started it had gone.
+_running: set[subprocess.Popen] = set()
+_running_lock = threading.Lock()
+
+
+def _remember(proc: subprocess.Popen) -> None:
+    with _running_lock:
+        _running.add(proc)
+
+
+def _forget(proc: subprocess.Popen) -> None:
+    with _running_lock:
+        _running.discard(proc)
+
+
+def _stop_all_remuxes() -> None:
+    with _running_lock:
+        procs, _running_copy = list(_running), None
+        _running.clear()
+    for proc in procs:
+        try:
+            proc.kill()
+            proc.wait(timeout=2)
+        except Exception:
+            logger.exception("proxy: could not stop ffmpeg pid=%s", proc.pid)
+    if procs:
+        logger.info("proxy: stopped %d remux process(es)", len(procs))
+
+
 # What to encode with when a stream has to be rebuilt rather than
 # repackaged.
 #
@@ -276,6 +314,7 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
             ffmpeg_command(_source_url, kind, rebuild=rebuild),
             stdout=subprocess.PIPE, stderr=sys.stderr,
         )
+        _remember(proc)
         try:
             while True:
                 chunk = proc.stdout.read(65536)
@@ -285,6 +324,7 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         finally:
+            _forget(proc)
             proc.kill()
             proc.wait()
         # A direct source or a finite HLS VOD playlist ending is ffmpeg
@@ -324,7 +364,15 @@ def start() -> bool:
 
 
 def stop() -> None:
+    """Stop listening, and stop what is still being served.
+
+    Both halves matter. Closing the socket ends nothing already in
+    flight, and the threads serving those requests are daemon threads
+    that the interpreter kills at exit without running their cleanup — so
+    without this, quitting mid-cast leaves an ffmpeg behind with no
+    parent and no reason to stop."""
     global _server, _thread
+    _stop_all_remuxes()
     if _server is not None:
         _server.shutdown()
         _server.server_close()
