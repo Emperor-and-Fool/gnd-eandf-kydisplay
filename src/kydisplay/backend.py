@@ -952,6 +952,24 @@ class DisplayBackend(QObject):
     # not trigger the same response.
     PORT_UNREACHABLE_CODE = "716"
 
+    def _log_transport_info(self, location):
+        """Ask the renderer what it thinks happened, and write it down.
+
+        The code it returns for a refused action carries nothing: this
+        television has answered 501 while playing perfectly, 501 while
+        failing, and not answered at all — one code, three outcomes. Its
+        own transport status is a separate question it answers honestly,
+        and ERROR_OCCURRED against a plausible-looking stream is worth far
+        more than another 501."""
+        from .dlna import client
+
+        try:
+            info = client.transport_info(location)
+        except Exception as error:
+            logger.info("transport info unavailable: %s", str(error)[:120])
+            return
+        logger.warning("renderer says: %s", info or "(nothing)")
+
     @pyqtSlot(str, str, str, result=bool)
     def dlnaCast(self, location, stream_url, title=""):
         from .dlna import client
@@ -963,6 +981,7 @@ class DisplayBackend(QObject):
             logger.exception("dlnaCast: failed (code=%s)", error.code)
             if error.code == self.PORT_UNREACHABLE_CODE:
                 self._set_current_zone_has_access(False)
+            self._log_transport_info(location)
             return False
         except Exception:
             # Not a SoapFault — a raw network failure (confirmed tonight:
@@ -971,6 +990,7 @@ class DisplayBackend(QObject):
             # bool, never let anything escape and skip whatever the
             # caller does after it — here, specifically, muting.
             logger.exception("dlnaCast: failed (non-SOAP error)")
+            self._log_transport_info(location)
             return False
 
     @pyqtSlot()

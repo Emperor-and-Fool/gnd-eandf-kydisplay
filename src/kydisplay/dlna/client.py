@@ -223,6 +223,39 @@ def play(location: str, stream_url: str, title: str = "", mac: str | None = None
     post(control_url, "Play", play_body, timeout=90.0)
 
 
+def transport_info(location: str, fetch=None, post=None) -> dict[str, str]:
+    """What the renderer says about its own transport: at least
+    ``CurrentTransportState`` (STOPPED, PLAYING, TRANSITIONING…) and
+    ``CurrentTransportStatus`` (OK, ERROR_OCCURRED).
+
+    Worth having because the renderer's answer to an action is close to
+    useless on its own. This television has returned 501 "Action Failed"
+    while playing perfectly, returned 501 while failing, and simply not
+    answered at all — three outcomes, one code, no information. Its own
+    view of its state is a different question with a real answer.
+
+    Read-only: it asks and changes nothing, so it is safe to call after a
+    failure without disturbing whatever the renderer is doing."""
+    fetch = fetch or _fetch_url
+    post = post or _post_soap
+    control_url = find_avtransport_control_url(location, fetch=fetch)
+    body = (
+        f'<u:GetTransportInfo xmlns:u="{AVTRANSPORT_TYPE}">'
+        f'<InstanceID>{INSTANCE_ID}</InstanceID></u:GetTransportInfo>'
+    )
+    response = post(control_url, "GetTransportInfo", body, timeout=10.0)
+    try:
+        root = ET.fromstring(response)
+    except ET.ParseError:
+        return {}
+    found = {}
+    for element in root.iter():
+        tag = element.tag.rsplit("}", 1)[-1]
+        if tag.startswith("Current") and element.text:
+            found[tag] = element.text
+    return found
+
+
 def stop(location: str, fetch=None, post=None) -> None:
     """Issue AVTransport Stop. Confirmed tonight as the fix for a renderer
     wedged in a state a Stop from the remote did not cleanly resolve —
