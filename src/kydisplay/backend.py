@@ -48,6 +48,18 @@ class DisplayBackend(QObject):
     linkChanged = pyqtSignal()
     networkAccessErrorChanged = pyqtSignal()
     currentZoneHasAccessChanged = pyqtSignal()
+    # Lets proxy.py's HTTP server (its own thread) reach dlnaCast (the
+    # GUI thread) safely — Qt auto-queues a signal emitted across
+    # threads, which a direct method call from that thread would not be.
+    triggerDlnaCast = pyqtSignal(str, str, str)
+    hasPlayableStreamChanged = pyqtSignal()
+    castActiveChanged = pyqtSignal()
+    # Lets proxy.py's HTTP server (its own thread) report the TV actually
+    # fetching the stream — confirmed tonight as more trustworthy than
+    # Play's own SOAP response, which has both timed out and returned a
+    # genuine SOAP fault while the TV played anyway. Same cross-thread
+    # reasoning as triggerDlnaCast above.
+    streamStarted = pyqtSignal()
 
     def __init__(self, demo=False, discovery=None, diagnostic_collector=None, p2p_watcher=None,
                  scheduler=None, handshake_probe=None, parent=None):
@@ -95,6 +107,27 @@ class DisplayBackend(QObject):
         # zone undetermined. False is the one case worth interrupting
         # startup for: a real, actionable, ungranted current zone.
         self._current_zone_has_access = True
+        self.triggerDlnaCast.connect(self.dlnaCast)
+        self.streamStarted.connect(self._on_stream_started)
+        self._has_playable_stream = False
+        self._cast_active = False
+        self._muted_sinks = []
+        self._active_renderer_location = None
+        self._mpris_watcher = None
+        self._dlna_discovery = None
+        if not demo:
+            try:
+                from .dlna.mpris import MprisWatcher
+
+                self._mpris_watcher = MprisWatcher()
+            except Exception:
+                self._mpris_watcher = None
+            try:
+                from .dlna.discovery import DmrDiscovery
+
+                self._dlna_discovery = DmrDiscovery()
+            except Exception:
+                self._dlna_discovery = None
         if not demo and self._service is None:
             try:
                 self._service = GnomeNetworkDisplaysService()
@@ -112,6 +145,7 @@ class DisplayBackend(QObject):
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(2000)
         self._poll_timer.timeout.connect(self._poll_displays)
+        self._poll_timer.timeout.connect(self._poll_mpris)
         if not demo:
             self._poll_timer.start()
 
@@ -318,6 +352,33 @@ class DisplayBackend(QObject):
         except Exception as error:
             logger.exception("_refresh_real_scan: failed")
             self._finish_scan_error(str(error))
+
+    @pyqtProperty(bool, notify=hasPlayableStreamChanged)
+    def hasPlayableStream(self):
+        return self._has_playable_stream
+
+    @pyqtProperty(bool, notify=castActiveChanged)
+    def castActive(self):
+        return self._cast_active
+
+    def _set_cast_active(self, active: bool):
+        if active != self._cast_active:
+            self._cast_active = active
+            self.castActiveChanged.emit()
+
+    def _poll_mpris(self):
+        if self._mpris_watcher is None:
+            return
+        has_stream = self._mpris_watcher.current_source() is not None
+        if has_stream != self._has_playable_stream:
+            self._has_playable_stream = has_stream
+            self.hasPlayableStreamChanged.emit()
+            # Deliberately does not touch castActive or unmuting: the
+            # browser pausing or the tab closing says nothing about
+            # whether the TV is still showing the stream — it fetches
+            # independently from the proxy once cast, not from the
+            # browser. Only an explicit Stop knows the cast actually
+            # ended, because nothing here polls the TV's real state.
 
     def _poll_displays(self):
         if self._service is None:
@@ -871,3 +932,166 @@ class DisplayBackend(QObject):
             self.networkZones.set_status(name, ssdp_ok, port_ok)
             if name == current:
                 self._set_current_zone_has_access(ssdp_ok and port_ok)
+
+    # The one UPnP error code confirmed tonight to actually mean "the TV
+    # could not reach the proxy" — every other SoapFault (701 "Transition
+    # not available" among them) means something else entirely and must
+    # not trigger the same response.
+    PORT_UNREACHABLE_CODE = "716"
+
+    @pyqtSlot(str, str, str, result=bool)
+    def dlnaCast(self, location, stream_url, title=""):
+        from .dlna import client
+
+        try:
+            client.play(location, stream_url, title=title)
+            return True
+        except client.SoapFault as error:
+            logger.exception("dlnaCast: failed (code=%s)", error.code)
+            if error.code == self.PORT_UNREACHABLE_CODE:
+                self._set_current_zone_has_access(False)
+            return False
+        except Exception:
+            # Not a SoapFault — a raw network failure (confirmed tonight:
+            # a SOAP call timing out raises TimeoutError, not SoapFault).
+            # This is this slot's one real contract: always return a
+            # bool, never let anything escape and skip whatever the
+            # caller does after it — here, specifically, muting.
+            logger.exception("dlnaCast: failed (non-SOAP error)")
+            return False
+
+    @pyqtSlot()
+    def castCurrentStream(self):
+        """What the playable-stream button calls: find what MPRIS says
+        is playing, resolve it to a direct URL, find a renderer, serve
+        it, cast it. Each step logs and gives up cleanly if it has
+        nothing to work with — no step here assumes the one before it
+        succeeded just because it was attempted.
+
+        Ignores the click entirely while a previous cast is still
+        considered active — confirmed tonight as a real failure mode:
+        a second cast issued while the TV is still processing the first
+        gets refused with its own, unrelated SoapFault (701), which is
+        not something retrying fixes. Only a call that actually fails
+        clears the flag, so a genuine retry after a real problem still
+        works; only a new MPRIS source clears it after a success, since
+        nothing here is told when the TV stops playing on its own."""
+        if self._cast_active:
+            logger.info("castCurrentStream: a cast is already active, ignoring")
+            return
+
+        import ipaddress
+
+        from .dlna import extractor, firewall, network, proxy
+
+        if self._mpris_watcher is None:
+            logger.warning("castCurrentStream: no MPRIS watcher")
+            return
+        source = self._mpris_watcher.current_source()
+        if source is None:
+            logger.warning("castCurrentStream: nothing playing")
+            return
+
+        try:
+            direct_url = extractor.extract(source.url)
+        except extractor.ExtractionError:
+            logger.exception("castCurrentStream: extraction failed for %s", source.url)
+            return
+        logger.info("castCurrentStream: resolved %s -> %s", source.url, direct_url[:150])
+
+        proxy.set_source(direct_url)
+
+        address = network.default_lan_interface_and_ip()
+        if address is None:
+            logger.warning("castCurrentStream: no LAN interface found")
+            return
+        _, lan_ip = address
+        stream_url = f"http://{lan_ip}:{firewall.DLNA_PORT}/stream.ts"
+
+        if self._dlna_discovery is None:
+            logger.warning("castCurrentStream: no DLNA discovery available")
+            return
+
+        # Generic discovery is the correct default — it is what works for
+        # any vendor, and the LG-specific scan is a subnet-wide port sweep
+        # that should not run on every cast just because it happens to be
+        # fast. But the WFD device list (already fresh, already reliable)
+        # tells us the vendor before DLNA discovery even starts: when it
+        # names an LG/webOS set, going straight to the proven fast path
+        # for that specific target is an informed choice, not a guess.
+        is_lg_target = any(
+            "lg" in d["name"].lower() or "webos" in d["name"].lower()
+            for d in self.devices.as_dicts()
+        )
+        renderer = None
+        if is_lg_target:
+            hosts = [str(h) for h in ipaddress.ip_network(f"{lan_ip}/24", strict=False).hosts()]
+            renderer = self._dlna_discovery.find_lg_blind(hosts)
+        if renderer is None:
+            devices = self._dlna_discovery.devices(active_search_seconds=3)
+            renderer = devices[0] if devices else None
+        if renderer is None:
+            logger.warning("castCurrentStream: no DLNA renderer found")
+            return
+        logger.info("castCurrentStream: casting to %s (%s)", renderer.name, renderer.location)
+
+        # Known before the call, not set from its result: Play's own SOAP
+        # response is not a reliable signal on this TV (confirmed tonight —
+        # seen both timing out and returning a genuine SOAP fault while the
+        # TV played anyway). castActive itself is set later, by
+        # _on_stream_started, from the proxy actually being fetched —
+        # this is only what that handler needs once it fires.
+        self._active_renderer_location = renderer.location
+
+        # Muted on click, not on confirmed start: the SOAP round trip to
+        # this TV can take 20-30s, and leaving local sound on for all of
+        # that is worse than muting slightly early. Guarded on
+        # _muted_sinks rather than _cast_active so a retry after a
+        # failed attempt (castActive never having been set) does not
+        # re-run this, overwrite the recorded indices with an empty
+        # list, and strand the originally-muted sinks unmutable.
+        if not self._muted_sinks:
+            from .dlna import audio
+
+            self._muted_sinks = audio.mute_browser_audio()
+
+        succeeded = self.dlnaCast(renderer.location, stream_url, source.title)
+        if not succeeded:
+            logger.warning("castCurrentStream: dlnaCast reported failure — "
+                           "not necessarily final, see streamStarted")
+
+    def _on_stream_started(self):
+        """The proxy's own evidence the TV is actually pulling the stream —
+        more trustworthy than Play's own SOAP response (confirmed tonight:
+        seen both timing out and returning a genuine SOAP fault while the
+        TV played anyway). Idempotent: a live source can make the TV
+        re-fetch from the top (documented LG behaviour)."""
+        if self._cast_active:
+            return
+        self._set_cast_active(True)
+
+    @pyqtSlot()
+    def stopCast(self):
+        """The only thing that clears castActive — nothing here polls
+        the TV's real transport state, so nothing else can honestly know
+        the cast has ended. Sends the real DLNA Stop (confirmed earlier
+        tonight as what actually resolves a wedged renderer), then
+        clears the flag and gives the local browser its sound back,
+        together, since all three mean the same thing: this cast is
+        over."""
+        if not self._cast_active:
+            return
+        if self._active_renderer_location:
+            from .dlna import client
+
+            try:
+                client.stop(self._active_renderer_location)
+            except Exception:
+                logger.exception("stopCast: DLNA Stop failed")
+        self._set_cast_active(False)
+        self._active_renderer_location = None
+        if self._muted_sinks:
+            from .dlna import audio
+
+            audio.unmute(self._muted_sinks)
+            self._muted_sinks = []

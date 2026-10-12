@@ -73,6 +73,20 @@ def set_cast_trigger(callback) -> None:
     _cast_trigger = callback
 
 
+# The TV actually fetching the stream, confirmed tonight as a more
+# trustworthy "did the cast really start" signal than the renderer's own
+# SOAP response to Play — that response has been seen both timing out
+# and returning a genuine SOAP fault while the TV played anyway. Runs in
+# this server's own thread, same cross-thread-safety story as
+# _cast_trigger above.
+_stream_started_trigger = None
+
+
+def set_stream_started_trigger(callback) -> None:
+    global _stream_started_trigger
+    _stream_started_trigger = callback
+
+
 def set_trial_file(path: Path | str, url_path: str = "/trial") -> None:
     global _trial_url_path, _trial_file
     _trial_url_path = url_path
@@ -148,6 +162,8 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "video/vnd.dlna.mpeg-tts")
         self.end_headers()
+        if _stream_started_trigger is not None:
+            _stream_started_trigger()
         proc = subprocess.Popen(
             ["ffmpeg", "-nostdin", "-loglevel", "warning",
              "-user_agent", USER_AGENT, "-i", _source_url,

@@ -377,6 +377,27 @@ Kirigami.ApplicationWindow {
                                     Layout.fillWidth: true
                                 }
                             }
+                            Controls.Button {
+                                // Visible while something playable is
+                                // detected, or a cast is active — the two
+                                // are independent: the TV keeps playing
+                                // from the proxy even if the browser tab
+                                // that started it is paused or closed, so
+                                // the stop state must stay visible on its
+                                // own, not just alongside the first.
+                                visible: displayBackend.hasPlayableStream || displayBackend.castActive
+                                display: Controls.AbstractButton.IconOnly
+                                icon.name: displayBackend.castActive ? "media-playback-stop" : "media-playback-start"
+                                Layout.preferredWidth: Kirigami.Units.iconSizes.large
+                                Layout.preferredHeight: width
+                                onClicked: {
+                                    if (displayBackend.castActive) {
+                                        displayBackend.stopCast()
+                                    } else {
+                                        displayBackend.castCurrentStream()
+                                    }
+                                }
+                            }
                             ColumnLayout {
                                 Layout.preferredWidth: displaysRoot.actionWidth
                                 Layout.minimumWidth: displaysRoot.actionWidth

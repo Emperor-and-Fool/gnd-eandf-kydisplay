@@ -88,6 +88,8 @@ def main(argv=None):
     # Parent the context object to the engine so QML is torn down before the
     # backend. Otherwise bindings briefly see a null object during shutdown.
     backend = DisplayBackend(demo=args.demo, parent=engine)
+    proxy.set_cast_trigger(backend.triggerDlnaCast.emit)
+    proxy.set_stream_started_trigger(backend.streamStarted.emit)
     engine.rootContext().setContextProperty("displayBackend", backend)
     engine.rootContext().setContextProperty("tray", None)
     qml = Path(__file__).with_name("qml") / "Main.qml"
