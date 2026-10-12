@@ -982,7 +982,7 @@ class DisplayBackend(QObject):
 
         import ipaddress
 
-        from .dlna import extractor, firewall, network, proxy
+        from .dlna import extractor, firewall, mpris, network, proxy
 
         if self._mpris_watcher is None:
             logger.warning("castCurrentStream: no MPRIS watcher")
@@ -992,8 +992,16 @@ class DisplayBackend(QObject):
             logger.warning("castCurrentStream: nothing playing")
             return
 
+        # Which browser is playing, for the sites that need its cookies.
+        # Worked out here rather than in the poll, because the poll runs
+        # every couple of seconds and only needs to know whether anything
+        # is playing at all; this walks a process tree and is wanted once,
+        # at the moment somebody actually casts.
+        browser = mpris.browser_for(source.bus_name, bus=self._mpris_watcher.bus)
+        logger.info("castCurrentStream: %s is playing in %s", source.bus_name, browser or "an unknown browser")
+
         try:
-            direct_url = extractor.extract(source.url)
+            direct_url = extractor.extract(source.url, browser=browser)
         except extractor.ExtractionError:
             logger.exception("castCurrentStream: extraction failed for %s", source.url)
             return

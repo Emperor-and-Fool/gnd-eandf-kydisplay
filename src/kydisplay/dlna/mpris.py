@@ -61,6 +61,96 @@ PROPERTIES = "org.freedesktop.DBus.Properties"
 # alongside "plasma-browser-integration-52536".
 PLASMA_INTEGRATION = "plasma-browser-integration"
 
+# Binary names to the name yt-dlp knows that browser by. The two are not
+# always the same word, which is the only reason this mapping exists
+# rather than passing the binary through.
+BROWSER_BINARIES = {
+    "firefox": "firefox",
+    "firefox-bin": "firefox",
+    "librewolf": "firefox",
+    "waterfox": "firefox",
+    "brave": "brave",
+    "brave-browser": "brave",
+    "brave-browser-stable": "brave",
+    "chrome": "chrome",
+    "google-chrome": "chrome",
+    "google-chrome-stable": "chrome",
+    "chromium": "chromium",
+    "chromium-browser": "chromium",
+    "vivaldi": "vivaldi",
+    "vivaldi-bin": "vivaldi",
+    "opera": "opera",
+    "microsoft-edge": "edge",
+    "microsoft-edge-stable": "edge",
+}
+
+
+def _connection_pid(bus, name: str) -> int | None:
+    import dbus
+
+    try:
+        proxy = bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus")
+        return int(dbus.Interface(proxy, "org.freedesktop.DBus").GetConnectionUnixProcessID(name))
+    except Exception:
+        return None
+
+
+def _process_name(pid: int) -> str | None:
+    """The binary a process was started from. Read from ``cmdline`` rather
+    than ``comm``, which truncates at fifteen characters and would turn
+    "brave-browser-stable" into something that matches nothing."""
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as handle:
+            argv0 = handle.read().split(b"\0")[0].decode(errors="replace")
+    except OSError:
+        return None
+    return argv0.rsplit("/", 1)[-1] or None
+
+
+def _parent_pid(pid: int) -> int | None:
+    try:
+        with open(f"/proc/{pid}/status") as handle:
+            for line in handle:
+                if line.startswith("PPid:"):
+                    return int(line.split()[1])
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def browser_for(bus_name: str, bus=None) -> str | None:
+    """The name yt-dlp knows the browser behind this player by, or ``None``
+    if it could not be worked out.
+
+    The bus name itself does not say. A browser's own MPRIS name does
+    ("firefox.instance_1_227"), but Plasma's extension publishes
+    "plasma-browser-integration-100665", where the number is the *host
+    process's* pid and nothing names the browser at all. What identifies it
+    is the process tree: that host is a child of the browser that launched
+    it, which on this machine distinguished an apt Brave at
+    /opt/brave.com/brave/brave from a Firefox at /usr/bin/firefox, both
+    publishing extension instances at once.
+
+    So the owning process is asked of D-Bus and its ancestors walked until
+    one of them is recognisably a browser. Walking rather than checking the
+    parent alone because a browser may put more than one process between
+    itself and the host, and the depth is not something to assume."""
+    if bus is None:
+        import dbus
+
+        bus = dbus.SessionBus()
+    pid = _connection_pid(bus, bus_name)
+    seen = 0
+    # Bounded so a cycle or a very deep tree cannot spin; nothing
+    # legitimate puts a browser more than a few processes up.
+    while pid and pid > 1 and seen < 12:
+        name = _process_name(pid)
+        if name and name in BROWSER_BINARIES:
+            return BROWSER_BINARIES[name]
+        pid = _parent_pid(pid)
+        seen += 1
+    return None
+
 
 @dataclass(frozen=True)
 class PlayingSource:

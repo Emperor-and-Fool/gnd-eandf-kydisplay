@@ -76,20 +76,27 @@ BASE_OPTIONS = {
     "format": FORMAT,
 }
 
-# YouTube's bot-check refuses an anonymous request outright, so it needs
-# the browser's own cookies; its "n challenge" then blocks extraction
-# even past that check unless a JS runtime and the remote challenge
-# solver are available.
-#
-# cookiesfrombrowser is the reason this table exists at all. It reads
-# Firefox's live cookies.sqlite while Firefox is running, which is both
-# a privacy matter and a real hazard to the browser — so it fires only
-# for the one site that cannot work without it.
+# YouTube's "n challenge" blocks extraction unless a JS runtime and the
+# remote challenge solver are available. Separate from its cookie
+# requirement below, which is a different check with a different answer.
 YOUTUBE_OPTIONS = {
-    "cookiesfrombrowser": ("firefox", None, None, None),
     "js_runtimes": {"node": {}},
     "remote_components": ["ejs:github"],
 }
+
+# Hosts whose bot-check refuses an anonymous request outright, and so need
+# a browser's cookies. Kept apart from the options tables because the
+# value cannot be written down here: it depends on which browser is
+# playing, which is only known at the moment of casting.
+COOKIE_HOSTS = ("youtube.com", "youtu.be")
+
+# Used when the playing browser could not be identified. Firefox because
+# it was the hard-coded value before this was worked out at all, so it is
+# the one with any history of working — not because it is more likely to
+# be right. A machine with no Firefox profile will fail here with a
+# yt-dlp error about a missing profile, which is worth knowing when this
+# is packaged for machines that are not this one.
+FALLBACK_BROWSER = "firefox"
 
 # Host suffixes to the extra options that host needs. Matched against the
 # URL's hostname, so a subdomain (m.youtube.com) resolves to the same
@@ -110,25 +117,44 @@ class ExtractionError(RuntimeError):
     """A page yt-dlp could not resolve to a direct stream."""
 
 
-def options_for(page_url: str) -> dict:
+def _host_matches(host: str, suffixes: tuple[str, ...]) -> bool:
+    return any(host == suffix or host.endswith("." + suffix) for suffix in suffixes)
+
+
+def options_for(page_url: str, browser: str | None = None) -> dict:
     """The yt-dlp options this specific URL's site needs: the shared base,
-    plus that host's own entry if it has one. Public so the per-site
-    routing can be checked without making a network request — which is
-    the only way to verify it without touching the user's browser."""
+    plus that host's own entry if it has one, plus the cookies of the
+    browser actually playing if the host demands cookies at all.
+
+    ``browser`` is yt-dlp's name for it, as :func:`.mpris.browser_for`
+    works out from the playing player. Passing nothing falls back to
+    :data:`FALLBACK_BROWSER`, which is what this did unconditionally
+    before — reading one hard-coded browser's cookies no matter which
+    browser was playing, so casting from a second browser worked only by
+    the accident of the first being installed and signed in.
+
+    Public, and taking the browser as an argument rather than finding it,
+    so what each site is sent can be checked without a network, a session
+    bus, or anyone's cookie jar."""
     host = (urllib.parse.urlsplit(page_url).hostname or "").lower()
     options = dict(BASE_OPTIONS)
     for suffixes, extra in SITE_OPTIONS:
-        if any(host == suffix or host.endswith("." + suffix) for suffix in suffixes):
+        if _host_matches(host, suffixes):
             options.update(extra)
             break
+    if _host_matches(host, COOKIE_HOSTS):
+        options["cookiesfrombrowser"] = (browser or FALLBACK_BROWSER, None, None, None)
     return options
 
 
-def extract(page_url: str) -> str:
+def extract(page_url: str, browser: str | None = None) -> str:
     """The direct URL a renderer can fetch for what is playing at
     ``page_url``. Raises :class:`ExtractionError` on anything that could
     not be resolved, such as a site yt-dlp does not support or one that
     refused the request.
+
+    ``browser`` is which browser is playing it, in yt-dlp's naming, for
+    the sites that need its cookies; see :func:`options_for`.
 
     Most sites are resolved by yt-dlp, with whatever that host needs added
     — see :func:`options_for` and the per-site tables above for which site
@@ -145,7 +171,7 @@ def extract(page_url: str) -> str:
             # the caller only cares that the page did not resolve.
             raise ExtractionError(f"could not reach Rumble for {page_url}: {error}") from error
 
-    options = options_for(page_url)
+    options = options_for(page_url, browser=browser)
     try:
         with yt_dlp.YoutubeDL(options) as ydl:
             info = ydl.extract_info(page_url, download=False)
