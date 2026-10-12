@@ -162,3 +162,61 @@ class DiagnosticsModel(QAbstractListModel):
 
     def as_dicts(self):
         return [asdict(item) for item in self._items]
+
+
+@dataclass(frozen=True)
+class NetworkZone:
+    name: str
+    is_current: bool
+    # None means "not checked yet", distinct from False ("checked, and
+    # missing") — the dialog must be able to tell "don't know" apart from
+    # "not granted", since opening it only ever reads, never writes.
+    ssdp_ok: bool | None
+    port_ok: bool | None
+
+
+class NetworkZoneModel(QAbstractListModel):
+    Roles = {
+        Qt.ItemDataRole.UserRole + 1: b"name",
+        Qt.ItemDataRole.UserRole + 2: b"isCurrent",
+        Qt.ItemDataRole.UserRole + 3: b"ssdpOk",
+        Qt.ItemDataRole.UserRole + 4: b"portOk",
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._zones: list[NetworkZone] = []
+
+    def roleNames(self):
+        return self.Roles
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self._zones)
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid() or not 0 <= index.row() < len(self._zones):
+            return None
+        zone = self._zones[index.row()]
+        return {
+            Qt.ItemDataRole.DisplayRole: zone.name,
+            Qt.ItemDataRole.UserRole + 1: zone.name,
+            Qt.ItemDataRole.UserRole + 2: zone.is_current,
+            Qt.ItemDataRole.UserRole + 3: zone.ssdp_ok,
+            Qt.ItemDataRole.UserRole + 4: zone.port_ok,
+        }.get(role)
+
+    def replace(self, zones: list[NetworkZone]):
+        self.beginResetModel()
+        self._zones = zones
+        self.endResetModel()
+
+    def set_status(self, name: str, ssdp_ok: bool, port_ok: bool):
+        """Update one zone's status in place, after Apply — not a full
+        replace, so the rest of the list (and any checkbox state QML
+        holds per delegate) does not get reset along with it."""
+        for row, zone in enumerate(self._zones):
+            if zone.name == name:
+                self._zones[row] = NetworkZone(zone.name, zone.is_current, ssdp_ok, port_ok)
+                index = self.index(row)
+                self.dataChanged.emit(index, index, [Qt.ItemDataRole.UserRole + 3, Qt.ItemDataRole.UserRole + 4])
+                return

@@ -31,18 +31,56 @@ Kirigami.ApplicationWindow {
     visible: true
     title: "Kydisplay"
 
+    // True only while the startup check pushed the network-access page
+    // because the current zone is not yet granted — not while that same
+    // page is open from the drawer, where the app already works. The app
+    // cannot do anything at all until this resolves, so letting it hide
+    // to the tray here would strand it somewhere there is no way back
+    // from — confirmed directly: closing it this way left no path back
+    // to finish granting access at all.
+    property bool startupGateActive: false
+
     // With a system tray, closing the window keeps Kydisplay running there,
-    // so a cast can go on while the window is out of the way.
+    // so a cast can go on while the window is out of the way. Not while
+    // the startup gate is still open — there is nothing running yet to
+    // keep going, only an unfinished setup step to get lost behind.
     onClosing: (close) => {
-        if (tray && tray.available) {
+        if (tray && tray.available && !root.startupGateActive) {
             close.accepted = false
             root.hide()
             tray.windowHidden()
         }
     }
 
+    Connections {
+        target: displayBackend
+        function onCurrentZoneHasAccessChanged() {
+            if (root.startupGateActive && displayBackend.currentZoneHasAccess) {
+                root.startupGateActive = false
+                root.openPage(displaysPage)
+            } else if (!root.startupGateActive && !displayBackend.currentZoneHasAccess) {
+                // A real cast just failed (dlnaCast's SoapFault catch) —
+                // not the startup check, which already handles itself via
+                // Component.onCompleted and would double-open this page
+                // without the guard above.
+                root.openNetworkAccessPage()
+            }
+        }
+    }
+
     function openPage(component) {
         pageStack.replace(component.createObject(root))
+    }
+
+    // The one place that opens the network-access page while another
+    // page is already active (drawer click, a live cast failure) —
+    // refresh and the gate flag happen together here so neither entry
+    // point can open it without the other, the way the drawer-only
+    // version just did.
+    function openNetworkAccessPage() {
+        startupGateActive = true
+        displayBackend.refreshNetworkZones()
+        openPage(networkAccessPage)
     }
 
     globalDrawer: Kirigami.GlobalDrawer {
@@ -63,6 +101,11 @@ Kirigami.ApplicationWindow {
                 }
             },
             Kirigami.Action {
+                text: "Network access"
+                icon.name: "network-wired"
+                onTriggered: root.openNetworkAccessPage()
+            },
+            Kirigami.Action {
                 text: "About"
                 icon.name: "help-about"
                 onTriggered: root.openPage(aboutPage)
@@ -70,7 +113,19 @@ Kirigami.ApplicationWindow {
         ]
     }
 
-    Component.onCompleted: pageStack.push(displaysPage.createObject(root))
+    // Every launch starts with one plain TCP check, no firewalld call and
+    // no prompt: is port 7235 actually reachable right now. Only when
+    // that says closed does startup go on to read zone data — the one
+    // thing that legitimately needs to ask firewalld anything.
+    Component.onCompleted: {
+        if (displayBackend.dlnaPortReachable()) {
+            pageStack.push(displaysPage.createObject(root))
+        } else {
+            root.startupGateActive = true
+            displayBackend.refreshNetworkZones()
+            pageStack.push(networkAccessPage.createObject(root))
+        }
+    }
 
     Component {
         id: displaysPage
@@ -410,6 +465,116 @@ Kirigami.ApplicationWindow {
                             Controls.Label { text: detail; wrapMode: Text.Wrap; Layout.fillWidth: true; opacity: 0.75 }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    Component {
+        id: networkAccessPage
+        Kirigami.ScrollablePage {
+            id: networkAccessRoot
+            title: "Network access"
+
+            // Per-zone checkbox state, kept here rather than in the model:
+            // whether a box is ticked is pure dialog state, not something
+            // firewalld has an opinion on.
+            property var checkedZones: ({})
+
+            actions: Kirigami.Action {
+                text: "Grant access"
+                icon.name: "dialog-ok-apply"
+                onTriggered: {
+                    let selected = []
+                    for (const name in networkAccessRoot.checkedZones) {
+                        if (networkAccessRoot.checkedZones[name]) {
+                            selected.push(name)
+                        }
+                    }
+                    displayBackend.applyNetworkAccess(selected)
+                }
+            }
+
+            ListView {
+                id: zoneList
+                model: displayBackend.networkZonesModel
+                spacing: Kirigami.Units.smallSpacing
+
+                header: ColumnLayout {
+                    width: zoneList.width
+                    spacing: Kirigami.Units.largeSpacing
+
+                    Kirigami.InlineMessage {
+                        Layout.fillWidth: true
+                        Layout.bottomMargin: Kirigami.Units.smallSpacing
+                        visible: true
+                        type: Kirigami.MessageType.Information
+                        text: "Kydisplay needs to let devices on your network discover it "
+                            + "and open port 7235 to receive casts. Choose which network "
+                            + "locations to allow — a zone can be granted ahead of time, "
+                            + "such as before travelling somewhere new."
+                    }
+
+                    Kirigami.InlineMessage {
+                        Layout.fillWidth: true
+                        Layout.bottomMargin: Kirigami.Units.smallSpacing
+                        visible: displayBackend.networkAccessError.length > 0
+                        type: Kirigami.MessageType.Error
+                        text: displayBackend.networkAccessError
+                    }
+                }
+
+                delegate: Kirigami.AbstractCard {
+                    id: zoneCard
+                    required property string name
+                    required property bool isCurrent
+                    required property bool ssdpOk
+                    required property bool portOk
+                    width: zoneList.width
+
+                    // Pre-ticked exactly when both are already granted — the
+                    // common case after the first time this zone was done,
+                    // matching firewall.py's own free-check-first shape.
+                    Component.onCompleted: {
+                        networkAccessRoot.checkedZones[name] = ssdpOk && portOk
+                    }
+
+                    contentItem: RowLayout {
+                        Controls.CheckBox {
+                            checked: zoneCard.ssdpOk && zoneCard.portOk
+                            onCheckedChanged: networkAccessRoot.checkedZones[zoneCard.name] = checked
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Controls.Label {
+                                text: zoneCard.name + (zoneCard.isCurrent ? "  ·  current network" : "")
+                                font.bold: true
+                            }
+                            RowLayout {
+                                spacing: Kirigami.Units.smallSpacing
+                                Kirigami.Icon {
+                                    source: zoneCard.ssdpOk ? "dialog-ok-apply" : "dialog-cancel"
+                                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                                    Layout.preferredHeight: width
+                                }
+                                Controls.Label { text: "Discovery (ssdp)"; opacity: 0.7 }
+                                Kirigami.Icon {
+                                    source: zoneCard.portOk ? "dialog-ok-apply" : "dialog-cancel"
+                                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                                    Layout.preferredHeight: width
+                                }
+                                Controls.Label { text: "Casting (port 7235)"; opacity: 0.7 }
+                            }
+                        }
+                    }
+                }
+
+                Kirigami.PlaceholderMessage {
+                    anchors.centerIn: parent
+                    width: parent.width - Kirigami.Units.gridUnit * 4
+                    visible: zoneList.count === 0 && displayBackend.networkAccessError.length === 0
+                    text: "No network locations found"
+                    icon.name: "network-wired"
                 }
             }
         }

@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from pathlib import Path
@@ -28,7 +29,9 @@ from PyQt6.QtCore import QObject, QTimer, pyqtProperty, pyqtSignal, pyqtSlot
 from .diagnostics import collect_diagnostics
 from . import p2p
 from .gnd import GnomeNetworkDisplaysService
-from .models import DiagnosticsModel, DisplayDevice, DisplayModel
+from .models import DiagnosticsModel, DisplayDevice, DisplayModel, NetworkZone, NetworkZoneModel
+
+logger = logging.getLogger(__name__)
 
 
 class DisplayBackend(QObject):
@@ -43,6 +46,8 @@ class DisplayBackend(QObject):
     errorChanged = pyqtSignal()
     # The band this cast landed on, and whether what we send fits it.
     linkChanged = pyqtSignal()
+    networkAccessErrorChanged = pyqtSignal()
+    currentZoneHasAccessChanged = pyqtSignal()
 
     def __init__(self, demo=False, discovery=None, diagnostic_collector=None, p2p_watcher=None,
                  scheduler=None, handshake_probe=None, parent=None):
@@ -83,6 +88,13 @@ class DisplayBackend(QObject):
         self._discovering = True
         self.devices = DisplayModel(self)
         self.diagnostics = DiagnosticsModel(self)
+        self.networkZones = NetworkZoneModel(self)
+        self._network_access_error = ""
+        # True whenever there is nothing to gate on — not just "granted".
+        # Covers: already granted, no firewall backend to act on, current
+        # zone undetermined. False is the one case worth interrupting
+        # startup for: a real, actionable, ungranted current zone.
+        self._current_zone_has_access = True
         if not demo and self._service is None:
             try:
                 self._service = GnomeNetworkDisplaysService()
@@ -110,6 +122,18 @@ class DisplayBackend(QObject):
     @pyqtProperty(QObject, constant=True)
     def diagnosticsModel(self):
         return self.diagnostics
+
+    @pyqtProperty(QObject, constant=True)
+    def networkZonesModel(self):
+        return self.networkZones
+
+    @pyqtProperty(str, notify=networkAccessErrorChanged)
+    def networkAccessError(self):
+        return self._network_access_error
+
+    @pyqtProperty(bool, notify=currentZoneHasAccessChanged)
+    def currentZoneHasAccess(self):
+        return self._current_zone_has_access
 
     @pyqtProperty(str, notify=statusChanged)
     def status(self):
@@ -249,6 +273,7 @@ class DisplayBackend(QObject):
 
     @pyqtSlot()
     def scan(self):
+        logger.info("scan: called, _scanning=%s demo=%s service=%s", self._scanning, self._demo, self._service)
         if self._scanning:
             return
         self._error = ""
@@ -260,12 +285,14 @@ class DisplayBackend(QObject):
             QTimer.singleShot(450, self._finish_demo_scan)
             return
         if self._service is None:
+            logger.error("scan: self._service is None, cannot scan")
             self._finish_scan_error("Cannot connect to the session D-Bus")
             return
         try:
             self._service.ensure_running()
             QTimer.singleShot(900, self._refresh_real_scan)
         except Exception as error:
+            logger.exception("scan: ensure_running failed")
             self._finish_scan_error(str(error))
 
     def _finish_demo_scan(self):
@@ -282,10 +309,14 @@ class DisplayBackend(QObject):
         self._finish_scan()
 
     def _refresh_real_scan(self):
+        logger.info("_refresh_real_scan: called")
         try:
-            self.devices.replace(self._service.displays())
+            displays = self._service.displays()
+            logger.info("_refresh_real_scan: got %d displays", len(displays))
+            self.devices.replace(displays)
             self._finish_scan()
         except Exception as error:
+            logger.exception("_refresh_real_scan: failed")
             self._finish_scan_error(str(error))
 
     def _poll_displays(self):
@@ -751,3 +782,92 @@ class DisplayBackend(QObject):
     @pyqtSlot()
     def refreshDiagnostics(self):
         self.diagnostics.replace(self._diagnostic_collector(self._service, self._demo))
+
+    def _set_network_access_error(self, message: str):
+        if message != self._network_access_error:
+            self._network_access_error = message
+            self.networkAccessErrorChanged.emit()
+
+    def _set_current_zone_has_access(self, has_access: bool):
+        if has_access != self._current_zone_has_access:
+            self._current_zone_has_access = has_access
+            self.currentZoneHasAccessChanged.emit()
+
+    @pyqtSlot(result=bool)
+    def dlnaPortReachable(self):
+        """The startup gate: a plain TCP reachability test, nothing
+        firewalld-related, no prompt. Called before anything else — only
+        when this says the port is closed does startup go on to open the
+        network-access page, which is what actually needs to read zone
+        data and therefore the one place a prompt belongs."""
+        from .dlna import firewall
+
+        logger.info("dlnaPortReachable: checking...")
+        result = firewall.dlna_port_reachable()
+        logger.info("dlnaPortReachable: result=%s", result)
+        return result
+
+    @pyqtSlot()
+    def refreshNetworkZones(self):
+        """Read-only: shows what is already granted in each offered zone
+        without changing anything, the same distinction
+        :func:`~kydisplay.dlna.firewall.port_already_open` exists for —
+        opening this page must never itself be the thing that writes a
+        rule.
+
+        Also updates :pyattr:`currentZoneHasAccess`, which is what a
+        startup check gates on: not "is every offered zone granted", only
+        "is the zone I am actually on right now" — the one that decides
+        whether this page needs to interrupt startup at all."""
+        from .dlna import firewall
+
+        logger.info("refreshNetworkZones: starting")
+        if firewall.detect_backend() != "firewalld":
+            logger.info("refreshNetworkZones: no firewalld backend detected")
+            self._set_network_access_error(
+                "No supported firewall was found active (needs firewalld)."
+            )
+            self.networkZones.replace([])
+            # Nothing here could be granted even if shown, so there is
+            # nothing to gate startup on.
+            self._set_current_zone_has_access(True)
+            return
+        self._set_network_access_error("")
+        current = firewall.current_zone()
+        zones = [
+            NetworkZone(
+                name=name,
+                is_current=(name == current),
+                ssdp_ok=firewall.service_already_enabled("ssdp", zone=name),
+                port_ok=firewall.port_already_open(zone=name),
+            )
+            for name in firewall.list_zones()
+        ]
+        self.networkZones.replace(zones)
+        current_zone = next((zone for zone in zones if zone.is_current), None)
+        has_access = current_zone is None or (current_zone.ssdp_ok and current_zone.port_ok)
+        logger.info("refreshNetworkZones: current=%s zones=%s has_access=%s", current, zones, has_access)
+        self._set_current_zone_has_access(has_access)
+
+    @pyqtSlot(list)
+    def applyNetworkAccess(self, zones):
+        """Grant discovery and casting access in each zone the dialog's
+        checkboxes selected. The one point a real polkit password prompt
+        can appear — only for whichever of these was not already
+        granted, per zone.
+
+        Updates :pyattr:`currentZoneHasAccess` when the current zone was
+        one of the ones just granted — confirmed directly as a real gap:
+        without this, a successful grant left the startup gate open with
+        no signal telling it to let the app through."""
+        from .dlna import firewall
+
+        logger.info("applyNetworkAccess: zones=%s", zones)
+        current = firewall.current_zone()
+        for name in zones:
+            ssdp_ok = firewall.ensure_service_enabled("ssdp", zone=name)
+            port_ok = firewall.ensure_port_open(zone=name)
+            logger.info("applyNetworkAccess: zone=%s ssdp_ok=%s port_ok=%s", name, ssdp_ok, port_ok)
+            self.networkZones.set_status(name, ssdp_ok, port_ok)
+            if name == current:
+                self._set_current_zone_has_access(ssdp_ok and port_ok)

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 from pathlib import Path
 import sys
@@ -44,6 +45,10 @@ def parser():
 
 
 def main(argv=None):
+    logging.basicConfig(
+        level=logging.INFO, stream=sys.stderr,
+        format="%(asctime)s %(name)s: %(message)s", datefmt="%H:%M:%S",
+    )
     args = parser().parse_args(argv)
     if args.diagnostics:
         print(json.dumps([item.__dict__ for item in collect_diagnostics(demo=args.demo)], indent=2))

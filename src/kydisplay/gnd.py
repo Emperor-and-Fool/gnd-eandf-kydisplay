@@ -19,11 +19,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 import subprocess
 
 from .models import DisplayDevice
+
+logger = logging.getLogger(__name__)
 
 
 # The engine is built with this project's bus prefix (patch 0010), so it never
@@ -130,22 +133,28 @@ class GnomeNetworkDisplaysService:
         import dbus
 
         proxy = self.bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus")
-        return bool(dbus.Interface(proxy, "org.freedesktop.DBus").NameHasOwner(SERVICE))
+        result = bool(dbus.Interface(proxy, "org.freedesktop.DBus").NameHasOwner(SERVICE))
+        logger.info("running: NameHasOwner(%s) -> %s", SERVICE, result)
+        return result
 
     def ensure_running(self):
         if self.running():
+            logger.info("ensure_running: already running, daemon not (re)started")
             return
         if not self.daemon_path:
+            logger.error("ensure_running: no daemon_path found, cannot start")
             raise RuntimeError("Network display backend is not installed")
         # The engine's warnings go where this process's go, the journal for an
         # application started from the menu. Discarding them hid why a
         # receiver was missing from the network route.
+        logger.info("ensure_running: starting daemon at %s", self.daemon_path)
         self._process = subprocess.Popen(
             [self.daemon_path],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             start_new_session=True,
         )
+        logger.info("ensure_running: daemon started, pid=%s", self._process.pid)
 
     def release(self):
         """Stop the engine if this process started it.
@@ -166,7 +175,10 @@ class GnomeNetworkDisplaysService:
     def displays(self) -> list[DisplayDevice]:
         _, properties = self._dbus()
         raw = properties.Get(INTERFACE, "Displays")
-        return [display_from_dbus(dict(item)) for item in raw]
+        logger.info("displays: raw Displays property -> %s", raw)
+        result = [display_from_dbus(dict(item)) for item in raw]
+        logger.info("displays: parsed -> %s", result)
+        return result
 
     @staticmethod
     def remembered_source() -> bool:
