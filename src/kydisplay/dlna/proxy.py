@@ -107,6 +107,47 @@ def set_source(url: str, url_path: str = "/stream.ts") -> None:
     _source_url_path = url_path
 
 
+def ffmpeg_command(url: str, kind: sourcelib.SourceKind) -> list[str]:
+    """The remux command for one source. A plain function taking the kind
+    rather than reading it, so what each kind is sent can be checked
+    without a network, a renderer, or a running server.
+
+    Only the HLS kinds get ``-extension_picky 0``, and that distinction is
+    not a tidiness choice — it is the whole point:
+
+    ffmpeg's HLS demuxer decides whether a segment may be opened by the
+    extension in its URL. Rumble serves segments from a ``.tar`` with the
+    real name in the query string (``.../x.rec.tar?r_file=media-0.ts``),
+    so the check sees "tar", refuses every variant, and ffmpeg produces no
+    stream at all. The flag turns that check off.
+
+    But the flag belongs to the HLS demuxer, so passing it to a source
+    that is not HLS makes ffmpeg reject the input outright —
+    "Option extension_picky not found", no output, and a renderer that
+    reports the file as unplayable. That is not hypothetical: it was
+    shipped, and it broke YouTube VOD and Odysee, both of which resolve to
+    a progressive MP4.
+
+    So this cannot be decided per site either, which is the other half of
+    the lesson. YouTube is both: a live stream resolves to HLS, an
+    ordinary video to a direct MP4. Only the kind of the source actually
+    in hand can answer it.
+
+    On the flag being harmless where it is used: a live YouTube stream was
+    measured with and without it and produced byte-identical output, since
+    its segments are ordinary ``.ts``. Rumble is the case that needs it.
+    """
+    command = ["ffmpeg", "-nostdin", "-loglevel", "warning"]
+    if kind in (sourcelib.SourceKind.HLS_VOD, sourcelib.SourceKind.HLS_LIVE):
+        command += ["-extension_picky", "0"]
+    command += [
+        "-user_agent", USER_AGENT, "-i", url,
+        "-c", "copy", "-bsf:v", "h264_mp4toannexb",
+        "-mpegts_flags", "system_b", "-f", "mpegts", "pipe:1",
+    ]
+    return command
+
+
 class _TrialHandler(http.server.BaseHTTPRequestHandler):
     """Serves the one registered trial file at its one registered path;
     404 for everything else, same as before this existed."""
@@ -165,31 +206,7 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
         if _stream_started_trigger is not None:
             _stream_started_trigger()
         proc = subprocess.Popen(
-            ["ffmpeg", "-nostdin", "-loglevel", "warning",
-             # ffmpeg's HLS demuxer decides whether a segment may be opened
-             # by looking at the extension in its URL, and refuses anything
-             # not on a built-in list. Rumble serves its segments from a
-             # .tar with the real name in the query string
-             # (".../x.rec.tar?r_file=media-0.ts"), so the check sees "tar",
-             # rejects every variant, and ffmpeg exits having produced no
-             # stream at all.
-             #
-             # This is the option that actually turns the check off, which
-             # is worth stating because the obvious candidates do not:
-             # "-allowed_extensions ALL" and "-allowed_segment_extensions
-             # ALL" were both tried against this exact stream and both
-             # still produced nothing — ALL is not a magic value in this
-             # ffmpeg, it is read as a literal extension list. Only
-             # extension_picky, which gates the whole check, worked.
-             #
-             # Turning it off costs nothing here: the URL being opened is
-             # one this app resolved itself a moment ago, not one a
-             # stranger supplied, so the extension was never carrying any
-             # safety property worth keeping.
-             "-extension_picky", "0",
-             "-user_agent", USER_AGENT, "-i", _source_url,
-             "-c", "copy", "-bsf:v", "h264_mp4toannexb",
-             "-mpegts_flags", "system_b", "-f", "mpegts", "pipe:1"],
+            ffmpeg_command(_source_url, kind),
             stdout=subprocess.PIPE, stderr=sys.stderr,
         )
         try:
