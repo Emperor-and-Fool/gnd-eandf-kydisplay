@@ -184,6 +184,41 @@ REBUILD_ARGS = [
 ]
 
 
+# What gives the stream a timeline of its own.
+#
+# A duration in the DIDL-Lite is a label on the item; it is not a
+# timeline, and this television proved the difference. Asked while
+# genuinely playing — the proxy pushing three megabytes every three
+# seconds, the connection live — it reported LG_TRANSITIONING, RelTime
+# frozen at 00:00:00 and a duration of zero. It was not confused about
+# what it had. It had nothing in the bytes to count from.
+#
+# Two things were missing, and we are the ones who make these bytes, so
+# both are ours to put there.
+#
+# The stream did not begin at zero. Timestamps were inherited from the
+# source and the first frame arrived at 1.4 seconds, an origin that means
+# something to the file it came from and nothing to a renderer. The mux
+# delay and preload are what shift that, and make_zero moves the whole
+# thing to start where a renderer would look for a start.
+#
+# And the packets carried no time of their own. Plain MPEG-TS is 188
+# bytes with nothing but the payload; the timestamped variant is 192,
+# with four bytes of arrival time on the front of each. DLNA names them
+# separately for that reason — the "_ISO" profiles are the untimestamped
+# ones, and ours were measured as exactly that: sync at 188, nothing at
+# 192. A renderer looking for a clock in the stream would find none.
+#
+# Both are proxy-side and neither touches protocolInfo, which is the
+# field that broke casting three times and is best left alone.
+TIMELINE_ARGS = [
+    "-muxdelay", "0",
+    "-muxpreload", "0",
+    "-avoid_negative_ts", "make_zero",
+    "-mpegts_m2ts_mode", "1",
+]
+
+
 def ffmpeg_command(url: str, kind: sourcelib.SourceKind,
                    rebuild: bool = False) -> list[str]:
     """The remux command for one source. A plain function taking the kind
@@ -227,7 +262,7 @@ def ffmpeg_command(url: str, kind: sourcelib.SourceKind,
         command += REBUILD_ARGS
     else:
         command += ["-c", "copy", "-bsf:v", "h264_mp4toannexb"]
-    command += ["-mpegts_flags", "system_b", "-f", "mpegts", "pipe:1"]
+    command += ["-mpegts_flags", "system_b", *TIMELINE_ARGS, "-f", "mpegts", "pipe:1"]
     return command
 
 
