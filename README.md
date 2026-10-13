@@ -1,7 +1,5 @@
 # Kydisplay
 
-A KDE Plasma 6 cast app. Scaffolding in progress — full documentation will land here as the project takes shape.
-
 A KDE Plasma 6 cast app. Scaffolding in progress — all documentation will land here as the project takes shape.
 
 So far, after reading about Miracast I realized the stability of the stream on a 2,4 Ghz network will never be optimal. So it took some time tweaking Genome-Network-Display to find a sweet spot of quality and stability on a 2,4Ghz. With a video playing, that actually didn't really succeed unless your lucky and the router and your wifi-radio negotiate a connection that leaves you the headroom.
