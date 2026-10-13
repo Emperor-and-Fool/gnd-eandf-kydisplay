@@ -38,16 +38,21 @@ you get the current one on the day you install.
 If no network is available the package refuses to install rather than leaving
 a half-configured one behind. Connect and try again.
 
+```
 sudo apt install ./kydisplay_<version>_amd64.deb
+```
 
-Everything else — ffmpeg, Qt, Python — comes from your distribution's own packages and apt will pull them in.
+Everything else — ffmpeg, Qt, Python — comes from your distribution's own
+packages and apt will pull them in.
 
 ## Keeping extraction working
 
 When a site changes and a stream stops resolving, refresh the extractor
 rather than waiting for a new release:
 
+```
 sudo kydisplay --update
+```
 
 ## License
 
