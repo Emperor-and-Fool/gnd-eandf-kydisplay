@@ -245,34 +245,26 @@ REBUILD_ARGS = [
 ]
 
 
-# What gives the stream a timeline of its own.
+# What gives the stream a timeline of its own, and what was tried for it.
 #
 # A duration in the DIDL-Lite is a label on the item; it is not a
 # timeline, and this television proved the difference. Asked while
 # genuinely playing — the proxy pushing three megabytes every three
-# seconds, the connection live — it reported LG_TRANSITIONING, RelTime
-# frozen at 00:00:00 and a duration of zero. It was not confused about
-# what it had. It had nothing in the bytes to count from.
+# seconds, the connection live — it reported RelTime frozen at 00:00:00
+# and a duration of zero. It was not confused about what it had. It had
+# nothing in the bytes to count from.
 #
-# Two things were missing, and we are the ones who make these bytes, so
-# both are ours to put there.
+# The mux delay and preload are half of the answer and are set on every
+# stream. The other half is where the count starts, and that differs
+# between an ordinary fetch and a seek, so ffmpeg_command decides it per
+# request rather than here.
 #
-# The stream did not begin at zero. Timestamps were inherited from the
-# source and the first frame arrived at 1.4 seconds, an origin that means
-# something to the file it came from and nothing to a renderer. The mux
-# delay and preload are what shift that, and make_zero moves the whole
-# thing to start where a renderer would look for a start.
-#
-# The packets also carried no time of their own, and the timestamped
-# variant of MPEG-TS was tried for it: 192 bytes with four bytes of
-# arrival time on each, rather than a bare 188. It was emitted correctly
-# — sync bytes measured at offsets 4, 196 and 388 — and it is not here,
-# because the television answered the question twice over:
-#
-#   RelTime stayed at 00:00:00 across three polls while playing, so the
-#   per-packet clock bought nothing at all
-#   the picture played and the sound did not
-#
+# The timestamped variant of MPEG-TS was tried as well: 192 bytes with
+# four bytes of arrival time on each, rather than a bare 188. It was
+# emitted correctly — sync bytes measured at offsets 4, 196 and 388 —
+# and it is not used, because the television answered twice over. RelTime
+# stayed at 00:00:00 across three polls while playing, so the per-packet
+# clock bought nothing; and the picture played while the sound did not.
 # The sound was in the stream — AAC LC, stream 1, confirmed in the output
 # — so nothing was dropped on our side. 192-byte TS is the Blu-ray shape,
 # where audio is expected to be AC3, DTS or LPCM. Trading sound for a
@@ -410,10 +402,11 @@ def ffmpeg_command(url: str, kind: sourcelib.SourceKind,
 
 # Headers a renderer uses to ask for part of something rather than all of
 # it. Logged whenever they appear, because what this TV actually asks for
-# is the only way to know what it would need to be given: it draws a
-# position bar from the duration in the DIDL-Lite but will not scrub, and
-# whether that is because it never asks, or asks in a way nothing here
-# answers, is not something to guess at.
+# has twice been the only thing that explained what it was doing: once to
+# learn that it asks by time at all, and once to learn that it mostly
+# does not ask for anything — a reverse seek that looked like a decoder
+# problem turned out to be a reconnection arriving bare, and only these
+# lines showed it.
 SEEK_HEADERS = ("Range", "TimeSeekRange.dlna.org", "PlaySpeed.dlna.org",
                 "getcontentFeatures.dlna.org", "transferMode.dlna.org")
 
