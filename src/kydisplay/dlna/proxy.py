@@ -101,10 +101,20 @@ _source_url: str | None = None
 _source_url_path: str = "/stream.ts"
 
 
-def set_source(url: str, url_path: str = "/stream.ts") -> None:
-    global _source_url, _source_url_path
+# Whether the registered source has to be rebuilt rather than
+# repackaged, when the caller already knows. The cast path looks at the
+# stream before it tells the renderer anything, so it has the answer
+# already; asking again here would be a second round trip to a CDN with
+# the television sitting waiting on the other side.
+_source_rebuild: bool | None = None
+
+
+def set_source(url: str, url_path: str = "/stream.ts",
+               rebuild: bool | None = None) -> None:
+    global _source_url, _source_url_path, _source_rebuild
     _source_url = url
     _source_url_path = url_path
+    _source_rebuild = rebuild
 
 
 # Every remux currently running, so that stopping the server can stop
@@ -342,7 +352,11 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
         # and spending the graphics chip on a guess would make the common
         # case worse to protect the rare one.
         rebuild = False
-        if kind is sourcelib.SourceKind.DIRECT:
+        if _source_rebuild is not None:
+            rebuild = _source_rebuild
+        elif kind is sourcelib.SourceKind.DIRECT:
+            # Nothing told us, so ask — this is the path a request that
+            # set no source of its own arrives by.
             frames = sourcelib.has_b_frames(_source_url)
             rebuild = bool(frames)
             logger.info("proxy: direct source has_b_frames=%s -> %s",

@@ -971,11 +971,16 @@ class DisplayBackend(QObject):
         logger.warning("renderer says: %s", info or "(nothing)")
 
     @pyqtSlot(str, str, str, result=bool)
-    def dlnaCast(self, location, stream_url, title=""):
+    def dlnaCast(self, location, stream_url, title="", duration=None, profile=None):
+        # The Qt-visible slot takes three arguments, as the signal that
+        # reaches it does. Duration and profile are for Python callers,
+        # which is every real cast; defaulted so neither path needs to
+        # know about the other.
         from .dlna import client
 
         try:
-            client.play(location, stream_url, title=title)
+            client.play(location, stream_url, title=title,
+                        duration=duration, profile=profile)
             return True
         except client.SoapFault as error:
             logger.exception("dlnaCast: failed (code=%s)", error.code)
@@ -1016,6 +1021,7 @@ class DisplayBackend(QObject):
         import ipaddress
 
         from .dlna import extractor, firewall, mpris, network, proxy
+        from .dlna import source as sourcelib
 
         if self._mpris_watcher is None:
             logger.warning("castCurrentStream: no MPRIS watcher")
@@ -1040,7 +1046,29 @@ class DisplayBackend(QObject):
             return
         logger.info("castCurrentStream: resolved %s -> %s", source.url, direct_url[:150])
 
-        proxy.set_source(direct_url)
+        # One look at the stream, answering two questions that both have
+        # to be settled before the renderer is told anything: which DLNA
+        # profile honestly describes what it is about to receive, and how
+        # long the thing runs. Done here rather than when the stream is
+        # fetched, because the description travels with SetAVTransportURI
+        # and that happens first.
+        #
+        # A profile that cannot be worked out is left unset, and the
+        # description falls back to the bare wildcard that has always
+        # worked. Naming one wrongly is worse than naming none: a
+        # renderer told a profile may hold the stream to it.
+        properties = sourcelib.probe(direct_url)
+        profile = sourcelib.dlna_profile(properties)
+        resolved_duration = properties.duration
+        logger.info("castCurrentStream: %s -> profile=%s duration=%ss b_frames=%s",
+                    f"{properties.width}x{properties.height}@{properties.frame_rate}",
+                    profile, resolved_duration, properties.has_b_frames)
+
+        proxy.set_source(
+            direct_url,
+            rebuild=bool(properties.has_b_frames)
+            if properties.has_b_frames is not None else None,
+        )
 
         address = network.default_lan_interface_and_ip()
         if address is None:
@@ -1117,7 +1145,8 @@ class DisplayBackend(QObject):
 
             self._muted_sinks = audio.mute_browser_audio()
 
-        succeeded = self.dlnaCast(renderer.location, stream_url, source.title)
+        succeeded = self.dlnaCast(renderer.location, stream_url, source.title,
+                                  duration=resolved_duration, profile=profile)
         if not succeeded:
             logger.warning("castCurrentStream: dlnaCast reported failure — "
                            "not necessarily final, see streamStarted")

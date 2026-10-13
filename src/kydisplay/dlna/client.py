@@ -141,20 +141,76 @@ def _describe_fault(action: str, status: int, fault_body: str) -> tuple[str, str
     return f"{action} failed: HTTP {status}", None
 
 
-def _metadata(title: str, uri: str) -> str:
-    writer = GUPnPAV.DIDLLiteWriter.new(None)
-    item = writer.add_item()
-    item.set_id("0")
-    item.set_parent_id("-1")
-    item.set_restricted(True)
-    item.set_title(title or uri)
-    item.set_upnp_class("object.item.videoItem")
+# The content type this proxy actually serves, which is also what its
+# HTTP responses say.
+DLNA_MIME = "video/vnd.dlna.mpeg-tts"
 
-    resource = item.add_resource()
-    resource.set_uri(uri)
-    resource.set_protocol_info(GUPnPAV.ProtocolInfo.new_from_string("http-get:*:*:*"))
+# Converted, not passed through: everything leaving this proxy has been
+# remuxed and some of it re-encoded, so a renderer is entitled to know it
+# is not receiving the original bytes.
+DLNA_CONVERSION = "1"
 
-    return writer.get_string()
+# Streaming transfer, background transfer, DLNA 1.5 — the value
+# production servers send for a transcoded stream. The remaining bits are
+# reserved and stay zero.
+DLNA_FLAGS = "01500000000000000000000000000000"
+
+
+def protocol_info(profile: str | None) -> str:
+    """A complete description of what is being offered, or none at all.
+
+    Nothing in between, because in between is what has failed here three
+    times: a content type narrowed with nothing to explain it, a profile
+    name on its own, and a seek capability advertised on content declared
+    unknown. The last is the clearest of the three — it says "I will not
+    tell you what this is, but do seek through it by time", and no
+    renderer can honour the second half without the first.
+
+    So with a profile in hand all five pieces travel together: the real
+    content type, the profile naming it, time-seek, the conversion
+    indicator and the flags. Without one, the bare wildcard that has
+    always worked, rather than a partial description that never has."""
+    if not profile:
+        return "http-get:*:*:*"
+    return (
+        f"http-get:*:{DLNA_MIME}:"
+        f"DLNA.ORG_PN={profile};"
+        f"DLNA.ORG_OP=10;"
+        f"DLNA.ORG_CI={DLNA_CONVERSION};"
+        f"DLNA.ORG_FLAGS={DLNA_FLAGS}"
+    )
+
+
+def _duration_text(seconds: int) -> str:
+    hours, rest = divmod(int(seconds), 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}.000"
+
+
+def _metadata(title: str, uri: str, duration: int | None = None,
+              profile: str | None = None) -> str:
+    """The DIDL-Lite that travels with SetAVTransportURI.
+
+    Written out here rather than through gupnp-av's writer, which cannot
+    express what this needs. Handed a fourth protocolInfo field holding
+    both an operation and flags, it keeps the operation and silently
+    drops the flags; it emits flags at all only when a profile name sits
+    beside them. The result read correctly in the source and arrived on
+    the wire missing pieces. The element is small enough to write
+    honestly instead."""
+    attributes = f'protocolInfo="{saxutils.escape(protocol_info(profile), {chr(34): "&quot;"})}"'
+    if duration:
+        attributes += f' duration="{_duration_text(duration)}"'
+    return (
+        '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"'
+        ' xmlns:dc="http://purl.org/dc/elements/1.1/"'
+        ' xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">'
+        '<item id="0" parentID="-1" restricted="1">'
+        f'<dc:title>{saxutils.escape(title or uri)}</dc:title>'
+        '<upnp:class>object.item.videoItem</upnp:class>'
+        f'<res {attributes}>{saxutils.escape(uri)}</res>'
+        '</item></DIDL-Lite>'
+    )
 
 
 def find_avtransport_control_url(location: str, fetch=None) -> str:
@@ -180,7 +236,8 @@ def find_avtransport_control_url(location: str, fetch=None) -> str:
     raise NoAvTransport(f"{location} has no AVTransport service")
 
 
-def play(location: str, stream_url: str, title: str = "", mac: str | None = None,
+def play(location: str, stream_url: str, title: str = "", duration: int | None = None,
+         profile: str | None = None, mac: str | None = None,
          fetch=None, post=None) -> None:
     """Push ``stream_url`` to the renderer at ``location`` and start it.
 
@@ -206,7 +263,7 @@ def play(location: str, stream_url: str, title: str = "", mac: str | None = None
         f'<u:SetAVTransportURI xmlns:u="{AVTRANSPORT_TYPE}">'
         f'<InstanceID>{INSTANCE_ID}</InstanceID>'
         f'<CurrentURI>{saxutils.escape(stream_url)}</CurrentURI>'
-        f'<CurrentURIMetaData>{saxutils.escape(_metadata(title, stream_url))}</CurrentURIMetaData>'
+        f'<CurrentURIMetaData>{saxutils.escape(_metadata(title, stream_url, duration, profile))}</CurrentURIMetaData>'
         f'</u:SetAVTransportURI>'
     )
     post(control_url, "SetAVTransportURI", set_uri_body)

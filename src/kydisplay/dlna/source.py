@@ -36,6 +36,7 @@ end)."""
 from __future__ import annotations
 
 import subprocess
+from dataclasses import dataclass
 import urllib.parse
 import urllib.request
 from enum import Enum
@@ -65,6 +66,106 @@ class SourceKind(Enum):
     DIRECT = "direct"
     HLS_VOD = "hls_vod"
     HLS_LIVE = "hls_live"
+
+
+@dataclass(frozen=True)
+class VideoProperties:
+    """What the video in a source actually is, as opposed to what its
+    container or profile name suggests."""
+
+    has_b_frames: int | None = None
+    width: int | None = None
+    height: int | None = None
+    frame_rate: float | None = None
+    duration: int | None = None
+
+    @property
+    def known(self) -> bool:
+        return None not in (self.width, self.height, self.frame_rate)
+
+
+# The DLNA profile names for plain 188-byte MPEG-TS, which is what this
+# proxy emits. "_ISO" is the untimestamped variant; the timestamped one
+# has its own names and a different packet size.
+#
+# Standard definition and high definition split at 576 lines, the tallest
+# of the standard-definition formats. European and North American split
+# on frame rate rather than geography — 25 and 50 are the European
+# family, 30 and 60 the other — and a renderer uses the name to know
+# which clock the stream runs on.
+SD_HEIGHT_LIMIT = 576
+EUROPEAN_RATES = (25.0, 50.0)
+
+
+def dlna_profile(properties: VideoProperties) -> str | None:
+    """The DLNA profile name describing what this proxy will send for a
+    source with these properties, or ``None`` when they are not known
+    well enough to name one honestly.
+
+    Naming one wrongly is worse than not naming one: a renderer told a
+    profile may hold the stream to it, and a declaration that does not
+    match what arrives is a declaration it is entitled to refuse."""
+    if not properties.known:
+        return None
+    definition = "SD" if properties.height <= SD_HEIGHT_LIMIT else "HD"
+    region = "EU" if round(properties.frame_rate, 2) in EUROPEAN_RATES else "NA"
+    return f"MPEG_TS_{definition}_{region}_ISO"
+
+
+def probe(url: str, timeout: float = 25.0) -> VideoProperties:
+    """Everything one ffprobe can tell us about the video in a source.
+
+    One call rather than several: it is a network round trip against a
+    CDN, and the two questions that need answering — whether the frames
+    need reordering, and which profile describes the result — want the
+    same data."""
+    try:
+        done = subprocess.run(
+            ["ffprobe", "-v", "error", "-user_agent", USER_AGENT,
+             "-select_streams", "v:0",
+             "-show_entries", "stream=has_b_frames,width,height,r_frame_rate",
+             "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1", url],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return VideoProperties()
+
+    values = {}
+    for line in done.stdout.splitlines():
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip()
+
+    def whole(key):
+        try:
+            return int(values[key])
+        except (KeyError, ValueError):
+            return None
+
+    rate = None
+    raw = values.get("r_frame_rate", "")
+    if "/" in raw:
+        top, _, bottom = raw.partition("/")
+        try:
+            rate = int(top) / int(bottom) if int(bottom) else None
+        except (ValueError, ZeroDivisionError):
+            rate = None
+
+    # Seconds, rounded: DIDL-Lite counts whole seconds and ffprobe
+    # answers with a float. Absent for a live source, which has no length
+    # to report and should not be given one.
+    try:
+        length = int(float(values["duration"]))
+    except (KeyError, ValueError):
+        length = None
+
+    return VideoProperties(
+        has_b_frames=whole("has_b_frames"),
+        width=whole("width"),
+        height=whole("height"),
+        frame_rate=rate,
+        duration=length,
+    )
 
 
 def has_b_frames(url: str, timeout: float = 25.0) -> int | None:
