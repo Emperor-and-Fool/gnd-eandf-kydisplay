@@ -63,6 +63,12 @@ cp -R "${project_root}/assets/icons/hicolor" "${package_root}/usr/share/icons/"
 find "${package_root}/usr/share/icons" -type d -exec chmod 0755 {} +
 find "${package_root}/usr/share/icons" -type f -exec chmod 0644 {} +
 
+# mirdispo is in Conflicts and Replaces because this package is that one
+# renamed, and the two cannot sit side by side: both install
+# /usr/libexec/gnome-network-displays-stream, and the name is compiled
+# into the daemon rather than passed to it, so neither can give the path
+# up without rebuilding from vendor/source. The binaries differ anyway,
+# so sharing one would leave whichever lost holding the other's helper.
 cat >"${package_root}/DEBIAN/control" <<EOF
 Package: ${package_name}
 Version: ${version}
@@ -72,8 +78,8 @@ Architecture: ${architecture}
 Maintainer: Kydisplay contributors <thomas.kai.tchong@emperorconsultancy.nl>
 Depends: python3 (>= 3.10), python3-venv, python3-pip, ca-certificates, ffmpeg, python3-pyqt6, python3-pyqt6.qtqml, python3-dbus, python3-gi, gir1.2-gupnpav-1.0, qml6-module-org-kde-kirigami, qml6-module-org-kde-desktop, network-manager, wpasupplicant | iwd, xdg-desktop-portal, xdg-desktop-portal-kde, krfb, libavahi-common3 (>= 0.6.16), libavahi-gobject0 (>= 0.6.22), libc6 (>= 2.34), libglib2.0-0t64 (>= 2.83.0), libgstreamer-plugins-base1.0-0 (>= 1.6.0), libgstreamer1.0-0 (>= 1.6.0), libgstrtspserver-1.0-0 (>= 1.8.0), libjson-glib-1.0-0 (>= 1.5.2), libnm0 (>= 1.40.4), libportal1 (>= 0.7), libprotobuf-c1 (>= 1.0.1), libpulse0 (>= 0.99.1), libsoup-3.0-0 (>= 3.0.3), gstreamer1.0-pipewire, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly
 Recommends: gstreamer1.0-libav, gstreamer1.0-pulseaudio
-Conflicts: gnome-network-displays, kde-network-displays
-Replaces: kde-network-displays
+Conflicts: gnome-network-displays, kde-network-displays, mirdispo
+Replaces: kde-network-displays, mirdispo
 Homepage: https://git.redpie.nl/EmperorAndFoolICT-Mediaproductie/gnd-kydisplay-eandf
 Description: Plasma-native wireless display casting
  Discover and cast the Plasma desktop to Miracast and Chromecast receivers.
