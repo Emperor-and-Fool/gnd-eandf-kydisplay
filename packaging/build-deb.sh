@@ -70,7 +70,7 @@ Section: kde
 Priority: optional
 Architecture: ${architecture}
 Maintainer: Kydisplay contributors <thomas.kai.tchong@emperorconsultancy.nl>
-Depends: python3 (>= 3.10), python3-pyqt6, python3-pyqt6.qtqml, python3-dbus, qml6-module-org-kde-kirigami, qml6-module-org-kde-desktop, network-manager, wpasupplicant | iwd, xdg-desktop-portal, xdg-desktop-portal-kde, krfb, libavahi-common3 (>= 0.6.16), libavahi-gobject0 (>= 0.6.22), libc6 (>= 2.34), libglib2.0-0t64 (>= 2.83.0), libgstreamer-plugins-base1.0-0 (>= 1.6.0), libgstreamer1.0-0 (>= 1.6.0), libgstrtspserver-1.0-0 (>= 1.8.0), libjson-glib-1.0-0 (>= 1.5.2), libnm0 (>= 1.40.4), libportal1 (>= 0.7), libprotobuf-c1 (>= 1.0.1), libpulse0 (>= 0.99.1), libsoup-3.0-0 (>= 3.0.3), gstreamer1.0-pipewire, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly
+Depends: python3 (>= 3.10), python3-venv, python3-pip, ca-certificates, ffmpeg, python3-pyqt6, python3-pyqt6.qtqml, python3-dbus, python3-gi, gir1.2-gupnpav-1.0, qml6-module-org-kde-kirigami, qml6-module-org-kde-desktop, network-manager, wpasupplicant | iwd, xdg-desktop-portal, xdg-desktop-portal-kde, krfb, libavahi-common3 (>= 0.6.16), libavahi-gobject0 (>= 0.6.22), libc6 (>= 2.34), libglib2.0-0t64 (>= 2.83.0), libgstreamer-plugins-base1.0-0 (>= 1.6.0), libgstreamer1.0-0 (>= 1.6.0), libgstrtspserver-1.0-0 (>= 1.8.0), libjson-glib-1.0-0 (>= 1.5.2), libnm0 (>= 1.40.4), libportal1 (>= 0.7), libprotobuf-c1 (>= 1.0.1), libpulse0 (>= 0.99.1), libsoup-3.0-0 (>= 3.0.3), gstreamer1.0-pipewire, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly
 Recommends: gstreamer1.0-libav, gstreamer1.0-pulseaudio
 Conflicts: gnome-network-displays, kde-network-displays
 Replaces: kde-network-displays
@@ -81,11 +81,62 @@ Description: Plasma-native wireless display casting
  streaming backend derived from GNOME Network Displays 0.99.0.
 EOF
 
+cat >"${package_root}/DEBIAN/preinst" <<'EOF'
+#!/bin/sh
+# Refuse rather than half-install.
+#
+# Configuring this package fetches yt-dlp from the network. If that
+# cannot be reached the fetch fails in postinst, and a postinst failure
+# leaves the package unpacked but unconfigured — installed enough to
+# look installed, broken enough not to run. Checking here instead means
+# nothing is unpacked at all and "apt install" simply declines.
+#
+# getent rather than curl or wget: it comes from libc, so it is present
+# before any dependency of this package has been configured, which is
+# more than can be said for anything else that could do the asking.
+set -e
+case "$1" in
+    install|upgrade)
+        # An environment that already exists does not need fetching
+        # again, so an upgrade on a disconnected machine is fine.
+        if [ -x /opt/kydisplay/venv/bin/python3 ]; then
+            exit 0
+        fi
+        if ! getent hosts pypi.org >/dev/null 2>&1; then
+            echo "kydisplay: installation needs a network connection." >&2
+            echo "  The package does not carry its stream extractor: yt-dlp" >&2
+            echo "  has to keep pace with the sites it reads, so it is" >&2
+            echo "  fetched at install time and is current on the day you" >&2
+            echo "  install. Connect and try again." >&2
+            exit 1
+        fi
+        ;;
+esac
+exit 0
+EOF
+
 cat >"${package_root}/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
 if [ "$1" = "configure" ]; then
     pkill -TERM -f '^/usr/libexec/kydisplay-daemon$' 2>/dev/null || true
+
+    # What the distribution cannot supply. --system-site-packages so the
+    # apt-provided PyQt6, gi and dbus stay visible: only yt-dlp and
+    # curl_cffi belong in here. The extras are the combination yt-dlp's
+    # own project recommends, and curl-cffi is what gives it the
+    # impersonation that some sites need before they will answer.
+    venv=/opt/kydisplay/venv
+    if [ ! -x "${venv}/bin/python3" ]; then
+        python3 -m venv --system-site-packages "${venv}"
+    fi
+    if ! "${venv}/bin/python3" -m pip install --quiet --upgrade \
+            "yt-dlp[default,curl-cffi]"; then
+        echo "kydisplay: could not fetch yt-dlp into ${venv}." >&2
+        echo "  Casting will not resolve streams until this succeeds." >&2
+        echo "  Retry with: sudo kydisplay --update" >&2
+        exit 1
+    fi
 fi
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database -q /usr/share/applications || true
@@ -102,6 +153,13 @@ set -e
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
     pkill -TERM -f '^/usr/libexec/kydisplay-daemon$' 2>/dev/null || true
 fi
+# Only on purge. dpkg does not know about this directory — postinst
+# built it — so nothing else will ever take it away, but a plain remove
+# should leave it: reinstalling then needs no network, and an upgrade
+# on a disconnected machine still works.
+if [ "$1" = "purge" ]; then
+    rm -rf /opt/kydisplay
+fi
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database -q /usr/share/applications || true
 fi
@@ -111,7 +169,8 @@ fi
 exit 0
 EOF
 
-chmod 0755 "${package_root}/DEBIAN/postinst" "${package_root}/DEBIAN/postrm"
+chmod 0755 "${package_root}/DEBIAN/preinst" \
+    "${package_root}/DEBIAN/postinst" "${package_root}/DEBIAN/postrm"
 (cd "${package_root}" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
 find "${package_root}" -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 dpkg-deb --root-owner-group --build "${package_root}" \

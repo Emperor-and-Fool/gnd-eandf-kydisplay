@@ -24,6 +24,31 @@ The complete 0.99.0 source archive and the patches applied to it are in this
 repository, so the exact source of every binary produced from it is
 available. `packaging/copyright` records who holds copyright over what.
 
+## Installing
+
+Kydisplay needs a network connection during installation. The package is
+small because it does not carry its Python dependencies — it fetches them at
+install time into a private environment under /opt/kydisplay/venv.
+
+This is deliberate. One of those dependencies is yt-dlp, which has to keep
+pace with the sites it reads; a copy sealed into a .deb goes stale within
+weeks and stream extraction starts failing. Fetching at install time means
+you get the current one on the day you install.
+
+If no network is available the package refuses to install rather than leaving
+a half-configured one behind. Connect and try again.
+
+sudo apt install ./kydisplay_<version>_amd64.deb
+
+Everything else — ffmpeg, Qt, Python — comes from your distribution's own packages and apt will pull them in.
+
+## Keeping extraction working
+
+When a site changes and a stream stops resolving, refresh the extractor
+rather than waiting for a new release:
+
+sudo kydisplay --update
+
 ## License
 
 GPL-3.0-or-later. See `LICENSE` and `packaging/copyright`.

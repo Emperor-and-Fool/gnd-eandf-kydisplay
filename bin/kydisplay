@@ -19,7 +19,59 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 from pathlib import Path
+import os
+import subprocess
 import sys
+
+# The interpreter that has yt-dlp and curl_cffi in it.
+#
+# Those two are not packaged by any distribution in a version worth
+# having: yt-dlp has to keep pace with the sites it reads, and a copy
+# sealed into a .deb goes stale within weeks — Rumble is usually the
+# first to stop resolving. So the package carries neither, and the
+# post-install step builds an environment here and fetches them.
+#
+# Built with --system-site-packages, because everything else Kydisplay
+# imports — PyQt6, gi, dbus — comes from the distribution and is
+# impractical to pip-install. Only what is genuinely ours lives inside.
+VENV = Path(os.environ.get("KYDISPLAY_VENV", "/opt/kydisplay/venv"))
+PACKAGE = "yt-dlp[default,curl-cffi]"
+
+
+def update():
+    """Fetch the current extractor into the environment.
+
+    When a site changes and a stream stops resolving, this is the whole
+    repair — no new release, no reinstall."""
+    python = VENV / "bin" / "python3"
+    if not python.is_file():
+        print(f"No environment at {VENV}. Reinstall the package.", file=sys.stderr)
+        return 1
+    if os.geteuid() != 0 and not os.access(python.parent, os.W_OK):
+        print(f"Updating {VENV} needs root. Try: sudo kydisplay --update",
+              file=sys.stderr)
+        return 1
+    return subprocess.call([str(python), "-m", "pip", "install",
+                            "--upgrade", PACKAGE])
+
+
+if "--update" in sys.argv[1:]:
+    raise SystemExit(update())
+
+# Re-exec into that interpreter, rather than adding its packages to the
+# path of this one. A venv's site-packages holds compiled extensions
+# built against the interpreter that made it, and borrowing them from
+# another is the kind of thing that works until it does not.
+#
+# PYTHONNOUSERSITE matters more than it looks: a venv built with
+# --system-site-packages still has ~/.local ahead of the system on its
+# path, so a stale copy of yt-dlp sitting there can win over the one
+# just installed. Switching user site off makes "which copy is running"
+# answerable without inspecting anything.
+_python = VENV / "bin" / "python3"
+if _python.is_file() and Path(sys.prefix).resolve() != VENV.resolve():
+    os.environ["PYTHONNOUSERSITE"] = "1"
+    os.execv(str(_python), [str(_python), os.path.abspath(__file__), *sys.argv[1:]])
 
 ROOT = Path(__file__).resolve().parents[1]
 for candidate in (
