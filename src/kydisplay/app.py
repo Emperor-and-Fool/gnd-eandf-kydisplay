@@ -27,12 +27,13 @@ from pathlib import Path
 import sys
 
 from PyQt6.QtCore import QCoreApplication, QTimer, QUrl
-from PyQt6.QtGui import QGuiApplication, QIcon
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtQml import QQmlApplicationEngine
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
 
 from . import __version__
 from .backend import DisplayBackend
+from .icons import APP_ID, app_icon
 from .diagnostics import collect_diagnostics
 
 
@@ -61,8 +62,12 @@ def main(argv=None):
     QCoreApplication.setOrganizationName("Kydisplay")
     QCoreApplication.setApplicationName("Kydisplay")
     QCoreApplication.setApplicationVersion(__version__)
-    QGuiApplication.setDesktopFileName("nl.eandf.Kydisplay")
-    QGuiApplication.setWindowIcon(QIcon.fromTheme("nl.eandf.Kydisplay", QIcon.fromTheme("video-display")))
+    QGuiApplication.setDesktopFileName(APP_ID)
+    # Same icon as the tray, found the same way: the theme if it knows
+    # this application, the files shipped in the tree if it does not.
+    # Running from a checkout the theme never does, which is how both of
+    # these ended up as a generic monitor glyph.
+    QGuiApplication.setWindowIcon(app_icon())
 
     # Before the QML engine loads: Main.qml's startup check tests whether
     # port 7235 is actually reachable, and that question only has a true

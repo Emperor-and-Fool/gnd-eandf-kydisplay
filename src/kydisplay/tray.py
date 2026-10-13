@@ -31,7 +31,7 @@ from PyQt6.QtCore import QObject, pyqtProperty, pyqtSlot
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
-APP_ID = "nl.eandf.Kydisplay"
+from .icons import APP_ID, app_icon
 
 
 def tray_label(status: str, device: str, status_text: str) -> str:
@@ -55,8 +55,7 @@ class Tray(QObject):
         self._app = app
         self._told_about_tray = False
 
-        self._icon = QSystemTrayIcon(
-            QIcon.fromTheme(APP_ID, QIcon.fromTheme("video-display")), self)
+        self._icon = QSystemTrayIcon(app_icon(), self)
         self._menu = QMenu()
         self._state = self._menu.addAction("")
         self._state.setEnabled(False)
@@ -110,7 +109,7 @@ class Tray(QObject):
             self._icon.showMessage(
                 "Kydisplay is still running",
                 "Stop sharing or quit from its icon in the system tray.",
-                QIcon.fromTheme(APP_ID), 5000)
+                app_icon(), 5000)
 
     @pyqtSlot()
     def quit(self):
