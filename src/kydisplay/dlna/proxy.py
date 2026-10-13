@@ -238,8 +238,53 @@ TIMELINE_ARGS = [
 ]
 
 
+def seek_seconds(headers) -> float | None:
+    """Where a renderer asked us to start, in seconds, or ``None`` when it
+    asked for the thing from the beginning.
+
+    This television sends both a byte offset and a time, together:
+
+        Range: bytes=11550720-
+        TimeSeekRange.dlna.org: npt=0:09:25.662-
+
+    The time is the one worth reading. It is exact and it means what it
+    says, while the byte offset is the renderer's own guess at where that
+    moment lives — a guess it has no way to make well, since nothing here
+    ever told it how large the stream is or at what rate it runs.
+
+    Plain ``Range: bytes=0-`` is not a seek. It is how this renderer opens
+    anything at all, and it arrives on every ordinary fetch, so treating
+    it as one would restart the stream constantly for no reason. Only a
+    request carrying a time range is a request to move."""
+    raw = headers.get("TimeSeekRange.dlna.org")
+    if not raw:
+        return None
+    _, _, value = raw.partition("npt=")
+    start, _, _end = value.partition("-")
+    start = start.strip()
+    if not start:
+        return None
+    # Either plain seconds, or hours:minutes:seconds with a fraction.
+    try:
+        if ":" in start:
+            parts = [float(piece) for piece in start.split(":")]
+            while len(parts) < 3:
+                parts.insert(0, 0.0)
+            hours, minutes, secs = parts[-3], parts[-2], parts[-1]
+            return hours * 3600 + minutes * 60 + secs
+        return float(start)
+    except ValueError:
+        return None
+
+
+def _npt(seconds: float) -> str:
+    hours, rest = divmod(float(seconds), 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{int(hours)}:{int(minutes):02d}:{secs:06.3f}"
+
+
 def ffmpeg_command(url: str, kind: sourcelib.SourceKind,
-                   rebuild: bool = False) -> list[str]:
+                   rebuild: bool = False, start: float | None = None) -> list[str]:
     """The remux command for one source. A plain function taking the kind
     rather than reading it, so what each kind is sent can be checked
     without a network, a renderer, or a running server.
@@ -272,6 +317,12 @@ def ffmpeg_command(url: str, kind: sourcelib.SourceKind,
     command = ["ffmpeg", "-nostdin", "-loglevel", "warning"]
     if kind in (sourcelib.SourceKind.HLS_VOD, sourcelib.SourceKind.HLS_LIVE):
         command += ["-extension_picky", "0"]
+    # Before the input, not after: an input seek asks the demuxer to move
+    # to the nearest keyframe and start decoding there, which is quick and
+    # is what a renderer jumping to a point in a film wants. After the
+    # input it would decode everything up to that point and throw it away.
+    if start:
+        command += ["-ss", f"{start:.3f}"]
     command += ["-user_agent", USER_AGENT, "-i", url]
     if rebuild:
         # Rebuilt rather than repackaged. No bitstream filter here: the
@@ -381,15 +432,34 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
             rebuild = bool(frames)
             logger.info("proxy: direct source has_b_frames=%s -> %s",
                         frames, "rebuilding" if rebuild else "repackaging")
-        logger.info("proxy: serving source kind=%s rebuild=%s url=%s",
-                    kind, rebuild, _source_url)
-        self.send_response(200)
+        # Where the renderer asked us to start. Only a time range counts
+        # as a request to move — see seek_seconds — so an ordinary fetch
+        # behaves exactly as it did before any of this existed.
+        start = seek_seconds(self.headers)
+        logger.info("proxy: serving source kind=%s rebuild=%s start=%s url=%s",
+                    kind, rebuild, start, _source_url)
+
+        if start:
+            # Answered as a partial response, because that is what was
+            # asked for, and with the time echoed back: a renderer that
+            # asked to begin at a point needs telling that is where this
+            # begins, or it has no reason to believe anything moved.
+            #
+            # The byte range it also sent is not answered honestly here,
+            # and cannot be: this stream is produced as it goes, so there
+            # is no total length and no offset that means anything. What
+            # is sent back is the time, which is exact, and which is the
+            # half of the request this can actually satisfy.
+            self.send_response(206)
+            self.send_header("TimeSeekRange.dlna.org", f"npt={_npt(start)}-")
+        else:
+            self.send_response(200)
         self.send_header("Content-Type", "video/vnd.dlna.mpeg-tts")
         self.end_headers()
         if _stream_started_trigger is not None:
             _stream_started_trigger()
         proc = subprocess.Popen(
-            ffmpeg_command(_source_url, kind, rebuild=rebuild),
+            ffmpeg_command(_source_url, kind, rebuild=rebuild, start=start),
             stdout=subprocess.PIPE, stderr=sys.stderr,
         )
         _remember(proc)
