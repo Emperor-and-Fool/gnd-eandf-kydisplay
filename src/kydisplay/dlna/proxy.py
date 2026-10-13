@@ -108,13 +108,21 @@ _source_url_path: str = "/stream.ts"
 # the television sitting waiting on the other side.
 _source_rebuild: bool | None = None
 
+# How long the source runs, when the caller knows. Needed to answer a
+# seek completely: a renderer told only where a stream begins knows
+# nothing about how much is left, and has no timeline to rebuild from.
+# The cast path reads this from the source before telling the renderer
+# anything, so it is already known by the time a seek can arrive.
+_source_duration: int | None = None
+
 
 def set_source(url: str, url_path: str = "/stream.ts",
-               rebuild: bool | None = None) -> None:
-    global _source_url, _source_url_path, _source_rebuild
+               rebuild: bool | None = None, duration: int | None = None) -> None:
+    global _source_url, _source_url_path, _source_rebuild, _source_duration
     _source_url = url
     _source_url_path = url_path
     _source_rebuild = rebuild
+    _source_duration = duration
 
 
 # Every remux currently running, so that stopping the server can stop
@@ -450,8 +458,22 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
             # is no total length and no offset that means anything. What
             # is sent back is the time, which is exact, and which is the
             # half of the request this can actually satisfy.
+            # The whole range, not just where it starts. A renderer told
+            # only a beginning knows where to resume from and nothing
+            # about how much is left, so it has no timeline to rebuild
+            # and sits where it was dropped rather than running on —
+            # observed exactly that, with a stop and start then playing
+            # happily from the chosen point.
+            #
+            # The end and the total are the same number here: this is a
+            # stream that runs to the end of the source once it starts,
+            # and there is no later point it stops short of.
+            if _source_duration:
+                span = f"npt={_npt(start)}-{_npt(_source_duration)}/{_npt(_source_duration)}"
+            else:
+                span = f"npt={_npt(start)}-"
             self.send_response(206)
-            self.send_header("TimeSeekRange.dlna.org", f"npt={_npt(start)}-")
+            self.send_header("TimeSeekRange.dlna.org", span)
         else:
             self.send_response(200)
         self.send_header("Content-Type", "video/vnd.dlna.mpeg-tts")

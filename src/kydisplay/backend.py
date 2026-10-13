@@ -1068,6 +1068,7 @@ class DisplayBackend(QObject):
             direct_url,
             rebuild=bool(properties.has_b_frames)
             if properties.has_b_frames is not None else None,
+            duration=resolved_duration,
         )
 
         address = network.default_lan_interface_and_ip()
