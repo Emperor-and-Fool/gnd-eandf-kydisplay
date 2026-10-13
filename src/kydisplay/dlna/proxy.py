@@ -171,6 +171,27 @@ def _forget(proc: subprocess.Popen) -> None:
         _running.discard(proc)
 
 
+def clear_source() -> None:
+    """Stop having anything to serve.
+
+    Stopping a cast used to mean telling the renderer to stop and
+    unmuting the laptop, and nothing more — the proxy went on answering
+    every request that arrived. A television that did not act on the
+    Stop therefore had no reason to let go: it kept fetching for two and
+    a half minutes after one, each fetch starting a fresh encode, while
+    the desktop had already decided the cast was over and given the
+    browser its sound back.
+
+    So the source goes too. A stray request after this gets the 404 it
+    would have got before anything was ever cast, which is the one
+    answer that ends it from this side regardless of what the renderer
+    believes."""
+    global _source_url, _source_position
+    _source_url = None
+    _source_position = None
+    _stop_all_remuxes()
+
+
 def _stop_all_remuxes() -> None:
     with _running_lock:
         procs, _running_copy = list(_running), None

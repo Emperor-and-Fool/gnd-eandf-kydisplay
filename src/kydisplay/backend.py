@@ -1222,6 +1222,13 @@ class DisplayBackend(QObject):
                 client.stop(self._active_renderer_location)
             except Exception:
                 logger.exception("stopCast: DLNA Stop failed")
+        # Before the flag and the sound, because those two only change
+        # what this desktop believes. This is the half that changes what
+        # the television can still get: with no source registered there
+        # is nothing left to fetch, whatever it made of the Stop.
+        from .dlna import proxy
+
+        proxy.clear_source()
         self._set_cast_active(False)
         self._active_renderer_location = None
         if self._muted_sinks:
