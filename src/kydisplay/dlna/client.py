@@ -145,10 +145,28 @@ def _describe_fault(action: str, status: int, fault_body: str) -> tuple[str, str
 # HTTP responses say.
 DLNA_MIME = "video/vnd.dlna.mpeg-tts"
 
-# Converted, not passed through: everything leaving this proxy has been
-# remuxed and some of it re-encoded, so a renderer is entitled to know it
-# is not receiving the original bytes.
-DLNA_CONVERSION = "1"
+# Whether to admit the stream has been converted.
+#
+# "1" is the truthful answer: everything leaving this proxy is remuxed
+# and some of it re-encoded, so it is not the original bytes. It was sent
+# that way first, and the television accepted the stream and played it —
+# while still reporting no position, no duration and no way to scrub.
+#
+# "0" is here because of what that admission is understood to mean.
+# Reports going back to 2012 have LG sets treating converted content as
+# unseekable on principle, regardless of what else the declaration says:
+# the scrubber is disabled because the content is tagged converted, not
+# because of anything about the content itself. Universal Media Server
+# and Serviio both document living with exactly this.
+#
+# So the flag is flipped to see whether the refusal is the tag rather
+# than the stream. It is not a free lie: a renderer that believes it has
+# original bytes may try to seek by byte offset, and this proxy cannot
+# answer that honestly — it has no total length and no index, because it
+# is producing the stream as it goes. If seeking then appears and
+# breaks playback the moment it is used, that is the answer, and the
+# truthful "1" should come back.
+DLNA_CONVERSION = "0"
 
 # Streaming transfer, background transfer, DLNA 1.5 — the value
 # production servers send for a transcoded stream. The remaining bits are
