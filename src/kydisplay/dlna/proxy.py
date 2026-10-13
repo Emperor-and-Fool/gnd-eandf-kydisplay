@@ -202,20 +202,29 @@ REBUILD_ARGS = [
 # delay and preload are what shift that, and make_zero moves the whole
 # thing to start where a renderer would look for a start.
 #
-# And the packets carried no time of their own. Plain MPEG-TS is 188
-# bytes with nothing but the payload; the timestamped variant is 192,
-# with four bytes of arrival time on the front of each. DLNA names them
-# separately for that reason — the "_ISO" profiles are the untimestamped
-# ones, and ours were measured as exactly that: sync at 188, nothing at
-# 192. A renderer looking for a clock in the stream would find none.
+# The packets also carried no time of their own, and the timestamped
+# variant of MPEG-TS was tried for it: 192 bytes with four bytes of
+# arrival time on each, rather than a bare 188. It was emitted correctly
+# — sync bytes measured at offsets 4, 196 and 388 — and it is not here,
+# because the television answered the question twice over:
 #
-# Both are proxy-side and neither touches protocolInfo, which is the
-# field that broke casting three times and is best left alone.
+#   RelTime stayed at 00:00:00 across three polls while playing, so the
+#   per-packet clock bought nothing at all
+#   the picture played and the sound did not
+#
+# The sound was in the stream — AAC LC, stream 1, confirmed in the output
+# — so nothing was dropped on our side. The television simply does not
+# decode AAC inside that container, which is not surprising: 192-byte TS
+# is the Blu-ray shape, where audio is expected to be AC3, DTS or LPCM.
+# Trading the sound for a clock the renderer ignores is a bad trade, so
+# only the start-at-zero half remains.
+#
+# Proxy-side only. protocolInfo is untouched, which is the field that
+# broke casting three times and is best left alone.
 TIMELINE_ARGS = [
     "-muxdelay", "0",
     "-muxpreload", "0",
     "-avoid_negative_ts", "make_zero",
-    "-mpegts_m2ts_mode", "1",
 ]
 
 
