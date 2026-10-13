@@ -231,19 +231,10 @@ REBUILD_ARGS = [
 #   the picture played and the sound did not
 #
 # The sound was in the stream — AAC LC, stream 1, confirmed in the output
-# — so nothing was dropped on our side. The television simply does not
-# decode AAC inside that container, which is not surprising: 192-byte TS
-# is the Blu-ray shape, where audio is expected to be AC3, DTS or LPCM.
-# Trading the sound for a clock the renderer ignores is a bad trade, so
-# only the start-at-zero half remains.
-#
-# Proxy-side only. protocolInfo is untouched, which is the field that
-# broke casting three times and is best left alone.
-TIMELINE_ARGS = [
-    "-muxdelay", "0",
-    "-muxpreload", "0",
-    "-avoid_negative_ts", "make_zero",
-]
+# — so nothing was dropped on our side. 192-byte TS is the Blu-ray shape,
+# where audio is expected to be AC3, DTS or LPCM. Trading sound for a
+# clock the renderer ignores is a bad trade.
+TIMELINE_ARGS = ["-muxdelay", "0", "-muxpreload", "0"]
 
 
 def seek_seconds(headers) -> float | None:
@@ -340,7 +331,37 @@ def ffmpeg_command(url: str, kind: sourcelib.SourceKind,
         command += REBUILD_ARGS
     else:
         command += ["-c", "copy", "-bsf:v", "h264_mp4toannexb"]
-    command += ["-mpegts_flags", "system_b", *TIMELINE_ARGS, "-f", "mpegts", "pipe:1"]
+    flags = "+system_b+initial_discontinuity" if start else "system_b"
+    command += ["-mpegts_flags", flags, *TIMELINE_ARGS]
+    if start:
+        # Keep the source's own clock, so the stream says the same thing
+        # as the answer carrying it. The seek response tells the renderer
+        # this stretch begins part-way in; an input seek otherwise
+        # restarts timestamps at zero, which would have the bytes claim
+        # to be the opening of the film while the header calls them the
+        # middle. A renderer counting along cannot reconcile the two, and
+        # it showed: the seek landed in the right place and then played
+        # with no sound and a timeline that did not follow.
+        #
+        # -output_ts_offset is the obvious-looking alternative and does
+        # not work — make_zero silently wins over it, measured.
+        #
+        # The discontinuity flag above is the other half of carrying a
+        # real clock. Seeking forward moves it ahead, which a decoder
+        # takes in its stride; seeking backward moves it behind, and a
+        # decoder reading a reference in its own future waits for the
+        # moment to arrive rather than playing. Reported as forward
+        # seeks working and backward seeks not. Marking the first packets
+        # discontinuous says the jump is intended, so the renderer resets
+        # its reference instead of waiting out the distance.
+        command += ["-copyts"]
+    else:
+        # Nothing was asked for but the beginning, so the beginning is
+        # where the count should start. Sources arrive with an origin of
+        # their own — one began at 1.4 seconds — which means something to
+        # the file it came from and nothing to a renderer.
+        command += ["-avoid_negative_ts", "make_zero"]
+    command += ["-f", "mpegts", "pipe:1"]
     return command
 
 
