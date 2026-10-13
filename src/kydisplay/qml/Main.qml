@@ -397,6 +397,47 @@ Kirigami.ApplicationWindow {
                                         displayBackend.castCurrentStream()
                                     }
                                 }
+
+                                // A tally light, read the way a studio reads
+                                // one. Green is an invitation: something is
+                                // playing that could go to this screen, and it
+                                // blinks because nothing else on the page is
+                                // asking to be noticed. Red is the one that
+                                // matters — this screen is showing it now —
+                                // and it breathes slowly rather than flashing,
+                                // because it is a state to be aware of rather
+                                // than an instruction.
+                                //
+                                // Laid over the button rather than colouring
+                                // its icon, the same way the slow-link button
+                                // does it: the tint reads as a state the whole
+                                // control is in, and the icon stays whatever
+                                // the desktop draws icons as.
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: Kirigami.Units.smallSpacing
+                                    color: displayBackend.castActive
+                                           ? Kirigami.Theme.negativeTextColor
+                                           : Kirigami.Theme.positiveTextColor
+
+                                    // Green, waiting to be used.
+                                    SequentialAnimation on opacity {
+                                        running: !displayBackend.castActive
+                                        loops: Animation.Infinite
+                                        alwaysRunToEnd: true
+                                        NumberAnimation { to: 0.12; duration: 600; easing.type: Easing.InOutQuad }
+                                        NumberAnimation { to: 0.45; duration: 600; easing.type: Easing.InOutQuad }
+                                    }
+
+                                    // Red, on air. Slower on purpose.
+                                    SequentialAnimation on opacity {
+                                        running: displayBackend.castActive
+                                        loops: Animation.Infinite
+                                        alwaysRunToEnd: true
+                                        NumberAnimation { to: 0.18; duration: 1500; easing.type: Easing.InOutQuad }
+                                        NumberAnimation { to: 0.48; duration: 1500; easing.type: Easing.InOutQuad }
+                                    }
+                                }
                             }
                             ColumnLayout {
                                 Layout.preferredWidth: displaysRoot.actionWidth
