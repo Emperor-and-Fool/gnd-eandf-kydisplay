@@ -115,14 +115,36 @@ _source_rebuild: bool | None = None
 # anything, so it is already known by the time a seek can arrive.
 _source_duration: int | None = None
 
+# Where the stream is, as opposed to where a particular request says it
+# is. This television does not hold a connection: it opens one, reads,
+# drops it and opens another, eleven times in a row between two seeks in
+# one measured session, and all but the seeks themselves arrive as a
+# plain "Range: bytes=0-" with no time on them at all.
+#
+# Served literally, every one of those restarts the film. Dragging
+# forward survives it, because being thrown back and re-buffering
+# forward still passes for progress; dragging backward does not. The
+# seek lands, the renderer reopens a second later, and the thing starts
+# from the beginning — reported as reverse seeks failing while forward
+# seeks worked, and visible in the log as 26 of 30 requests served from
+# zero.
+#
+# So a bare reopen is read as what it is, a reconnection rather than a
+# request to go back to the start, and answered from wherever the stream
+# had got to. Only a new time range moves this, and only set_source
+# clears it, so a fresh cast still begins at the beginning.
+_source_position: float | None = None
+
 
 def set_source(url: str, url_path: str = "/stream.ts",
                rebuild: bool | None = None, duration: int | None = None) -> None:
     global _source_url, _source_url_path, _source_rebuild, _source_duration
+    global _source_position
     _source_url = url
     _source_url_path = url_path
     _source_rebuild = rebuild
     _source_duration = duration
+    _source_position = None
 
 
 # Every remux currently running, so that stopping the server can stop
@@ -464,11 +486,22 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
         # Where the renderer asked us to start. Only a time range counts
         # as a request to move — see seek_seconds — so an ordinary fetch
         # behaves exactly as it did before any of this existed.
-        start = seek_seconds(self.headers)
-        logger.info("proxy: serving source kind=%s rebuild=%s start=%s url=%s",
-                    kind, rebuild, start, _source_url)
+        global _source_position
+        asked = seek_seconds(self.headers)
+        if asked is not None:
+            _source_position = asked
+        # Where ffmpeg begins: the moment just asked for, or failing that
+        # the last one that was, so a reconnection carries on instead of
+        # starting over.
+        start = asked if asked is not None else _source_position
+        logger.info("proxy: serving source kind=%s rebuild=%s asked=%s start=%s",
+                    kind, rebuild, asked, start)
 
-        if start:
+        # Only an actual time range earns a partial response. A bare
+        # reopen asked for the whole thing and gets a 200 saying so, even
+        # though it is answered from part-way in — that is the renderer's
+        # own position being handed back to it, not a range it requested.
+        if asked:
             # Answered as a partial response, because that is what was
             # asked for, and with the time echoed back: a renderer that
             # asked to begin at a point needs telling that is where this
