@@ -2,6 +2,18 @@
 
 A KDE Plasma 6 cast app. Scaffolding in progress — full documentation will land here as the project takes shape.
 
+A KDE Plasma 6 cast app. Scaffolding in progress — all documentation will land here as the project takes shape.
+
+So far, after reading about Miracast I realized the stability of the stream on a 2,4 Ghz network will never be optimal. So it took some time tweaking Genome-Network-Display to find a sweet spot of quality and stability on a 2,4Ghz. With a video playing, that actually didn't really succeed unless your lucky and the router and your wifi-radio negotiate a connection that leaves you the headroom.
+
+To achieve best as possible in the limited time we had, we added HW encoding on NVENC and iGPU to at least allow the render its own space to work.
+
+So I realized I had to force 5Ghz on the Router if I wanted a better video format. We created a detector that will show you, you are on low bandwidth and allow you in one click to switch format. By the time that worked I realized the miracast would be best for presentations. Kwin did not (yet) us provide a method to get a smooth Virtual Screen. But a start has been made and it is on the ToDo list.
+
+Since i want to watch video while I work,and most TV's these days have DLNA,we took some time to get that to work for most Peertube, Odysee, Rumble & YT video's. The Mirdispo Gui skeleton allowed us to do a quick build that shows when there is streamable video playing on your system. If the TV is found K-wi-display will stream it to any capable wireless display.
+
+Let me know what you think.
+
 ## Built on GNOME Network Displays (and some work done by mirdispo creators)
 
 The Miracast backend inherits its streaming engine from
