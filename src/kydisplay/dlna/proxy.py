@@ -436,7 +436,7 @@ class _TrialHandler(http.server.BaseHTTPRequestHandler):
         elif kind is sourcelib.SourceKind.DIRECT:
             # Nothing told us, so ask — this is the path a request that
             # set no source of its own arrives by.
-            frames = sourcelib.has_b_frames(_source_url)
+            frames = sourcelib.has_b_frames(_source_url, kind)
             rebuild = bool(frames)
             logger.info("proxy: direct source has_b_frames=%s -> %s",
                         frames, "rebuilding" if rebuild else "repackaging")

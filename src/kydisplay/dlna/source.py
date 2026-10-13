@@ -112,16 +112,46 @@ def dlna_profile(properties: VideoProperties) -> str | None:
     return f"MPEG_TS_{definition}_{region}_ISO"
 
 
-def probe(url: str, timeout: float = 25.0) -> VideoProperties:
+def _reader_args(kind: "SourceKind | None") -> list[str]:
+    """What ffprobe needs in order to open a source of this kind.
+
+    Only playlists get ``-extension_picky 0``, and the flag only ever
+    switches a check off: ffmpeg's HLS reader keeps a list of extensions
+    it will accept for segments and refuses anything else outright.
+    Rumble's segments are served as ``.tar?r_file=media-0.ts`` — genuine
+    MPEG-TS, as its own ``r_type=video/mp2t`` says, under a name the list
+    does not have. Refused on the name, before the bytes are looked at.
+
+    Measured on three sources: it is what Rumble needs, and it changes
+    nothing at all for a PeerTube playlist, down to the decimal of the
+    duration. A direct file has no segments, so there is nothing for the
+    check to reject and nothing for the flag to do — and passing it to
+    the remuxer on a non-HLS input made ffmpeg exit with "Option
+    extension_picky not found", which is what broke YouTube and Odysee
+    yesterday. Hence by kind, not everywhere, and not by site: any
+    playlist whose CDN spells its segments unusually is covered, today's
+    and the next one's."""
+    if kind in (SourceKind.HLS_VOD, SourceKind.HLS_LIVE):
+        return ["-extension_picky", "0"]
+    return []
+
+
+def probe(url: str, kind: "SourceKind | None" = None,
+          timeout: float = 25.0) -> VideoProperties:
     """Everything one ffprobe can tell us about the video in a source.
 
     One call rather than several: it is a network round trip against a
     CDN, and the two questions that need answering — whether the frames
     need reordering, and which profile describes the result — want the
-    same data."""
+    same data.
+
+    ``kind`` is optional only so that callers which genuinely have a
+    direct source need not classify first. A playlist probed without it
+    may well answer nothing."""
     try:
         done = subprocess.run(
-            ["ffprobe", "-v", "error", "-user_agent", USER_AGENT,
+            ["ffprobe", "-v", "error", *_reader_args(kind),
+             "-user_agent", USER_AGENT,
              "-select_streams", "v:0",
              "-show_entries", "stream=has_b_frames,width,height,r_frame_rate",
              "-show_entries", "format=duration",
@@ -168,7 +198,8 @@ def probe(url: str, timeout: float = 25.0) -> VideoProperties:
     )
 
 
-def has_b_frames(url: str, timeout: float = 25.0) -> int | None:
+def has_b_frames(url: str, kind: "SourceKind | None" = None,
+                 timeout: float = 25.0) -> int | None:
     """How many frames a decoder must hold back to play this in order, or
     ``None`` if it could not be asked.
 
@@ -185,7 +216,8 @@ def has_b_frames(url: str, timeout: float = 25.0) -> int | None:
     profile says what is permitted, this says what is actually there."""
     try:
         done = subprocess.run(
-            ["ffprobe", "-v", "error", "-user_agent", USER_AGENT,
+            ["ffprobe", "-v", "error", *_reader_args(kind),
+             "-user_agent", USER_AGENT,
              "-select_streams", "v:0",
              "-show_entries", "stream=has_b_frames",
              "-of", "default=noprint_wrappers=1:nokey=1", url],

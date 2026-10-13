@@ -1057,7 +1057,15 @@ class DisplayBackend(QObject):
         # description falls back to the bare wildcard that has always
         # worked. Naming one wrongly is worse than naming none: a
         # renderer told a profile may hold the stream to it.
-        properties = sourcelib.probe(direct_url)
+        #
+        # Classified first, because a playlist cannot be read without
+        # knowing it is one: Rumble's segments are named .tar and
+        # ffprobe refuses them on sight unless told not to be fussy
+        # about it, so an unclassified probe of a Rumble stream comes
+        # back with nothing at all — no size, no frame rate, and no
+        # length, which is the one the renderer needs to draw a timeline.
+        kind = sourcelib.classify(direct_url)
+        properties = sourcelib.probe(direct_url, kind)
         profile = sourcelib.dlna_profile(properties)
         resolved_duration = properties.duration
         logger.info("castCurrentStream: %s -> profile=%s duration=%ss b_frames=%s",
