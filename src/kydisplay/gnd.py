@@ -136,7 +136,10 @@ class GnomeNetworkDisplaysService:
 
         proxy = self.bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus")
         result = bool(dbus.Interface(proxy, "org.freedesktop.DBus").NameHasOwner(SERVICE))
-        logger.info("running: NameHasOwner(%s) -> %s", SERVICE, result)
+        # Only when it changes. See displays() below for why.
+        if result != getattr(self, "_last_running", None):
+            logger.info("running: NameHasOwner(%s) -> %s", SERVICE, result)
+            self._last_running = result
         return result
 
     def _owner_pid(self) -> int | None:
@@ -247,9 +250,18 @@ class GnomeNetworkDisplaysService:
     def displays(self) -> list[DisplayDevice]:
         _, properties = self._dbus()
         raw = properties.Get(INTERFACE, "Displays")
-        logger.info("displays: raw Displays property -> %s", raw)
         result = [display_from_dbus(dict(item)) for item in raw]
-        logger.info("displays: parsed -> %s", result)
+        # Only when the answer is different from last time. This is
+        # polled every two seconds and nearly always says exactly what it
+        # said before: 478 lines of one unchanged television in an
+        # 838-line session, with the handful of lines that explained a
+        # real fault buried somewhere in the middle of them. What is
+        # worth recording is a display appearing, going, or changing
+        # state, not that it is still there.
+        if result != getattr(self, "_last_displays", ...):
+            logger.info("displays: raw Displays property -> %s", raw)
+            logger.info("displays: parsed -> %s", result)
+            self._last_displays = result
         return result
 
     @staticmethod
